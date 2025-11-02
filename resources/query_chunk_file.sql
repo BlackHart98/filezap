@@ -1,0 +1,1 @@
+SELECT * FROM filezap_chunks WHERE chunk_checksum IN ?;

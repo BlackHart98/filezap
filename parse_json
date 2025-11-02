@@ -1,0 +1,9 @@
+import json
+
+if __name__ == "__main__":
+    with open("filezap.json", "r") as f:
+        content = f.read()
+        json_obj = json.loads(content)
+        
+        print(json_obj["chunk_seq"][0])
+        f.close()

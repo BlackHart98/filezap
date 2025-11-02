@@ -1,0 +1,16 @@
+tmp/
+dtmp/
+examples/
+build/
+**.DS_Store
+.vscode/
+nob
+nob.old
+init.sh
+profile.json.gz
+request
+response
+filezap.log
+filezap.json
+JOURNAL.md
+filezap.db
