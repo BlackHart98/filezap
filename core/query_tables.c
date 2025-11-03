@@ -50,7 +50,7 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
 
         if (local_nchunk >= mnfst->chunk_seq.chunk_seq_len) {
             fz_log(FZ_INFO, "more rows returned than expected; ignoring extras");
-            RETURN_DEFER(0);
+            break;
         }
 
         buffer[local_nchunk].chunk_checksum = chunk_checksum;
