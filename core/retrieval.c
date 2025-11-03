@@ -31,6 +31,11 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     fz_chunk_t *chunk_list = NULL;
     size_t chunk_size = 0;
 
+    hmdefault(missing_chunks, 1);
+    for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
+        hmput(missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 1);
+    }
+
     if(!fz_dyn_enqueue_init(&dq, RESERVED)){
         fz_log(FZ_ERROR, "Out of memory ah error!");
         RETURN_DEFER(0);
@@ -41,11 +46,10 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
         RETURN_DEFER(0);
     }
-    if (!fz_query_required_chunk_list(ctx->db, &chunk_list, &chunk_size)) RETURN_DEFER(0);
-    if (!fz_fetch_chunks_from_file_cutpoint(ctx, &mnfst, chunk_list, mnfst->chunk_seq.chunk_seq_len, &cutpoint_map, &missing_chunks)){
+    if (!fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size)) RETURN_DEFER(0);
+    if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, &cutpoint_map, &missing_chunks)){
         RETURN_DEFER(0);
     }
-
 
     fz_log(FZ_INFO, "File from cutpoint successful");
     /* Todo: revisit this multithreaded download */
@@ -99,13 +103,19 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         if (NULL != buffer) free(buffer);
         if (NULL != dest_fh) fclose(dest_fh);
         if (NULL != missing_chunks) hmfree(missing_chunks);
-        fz_dyn_enqueue_destroy(&dq);
         if (NULL != cutpoint_map){
             for (size_t i = 0; i < shlenu(cutpoint_map); i++){
                 fz_cutpoint_list_destroy(cutpoint_map[i].value);
             }
             shfree(cutpoint_map);
         }
+        if (NULL != chunk_list) {
+            for(size_t i = 0; i < chunk_size; i++){
+                if (NULL != chunk_list[i].src_file_path) free((char *)chunk_list[i].src_file_path);
+            }
+            free(chunk_list);
+        }
+        fz_dyn_enqueue_destroy(&dq);
         return result;
 }
 
@@ -265,7 +275,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     char *buffer = NULL;
     char *chunk_loc_buffer = NULL;
     /* This is wasteful, use a resizable arena allocator */
-    shdefault(*cutpoint_map, NULL); hmdefault(*missing_chunks, 1);
+    shdefault(*cutpoint_map, NULL); /*hmdefault(*missing_chunks, 1);*/
     for (size_t i = 0; i < nchunk; i++){
         fz_cutpoint_list_t *val_buffer =(fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
         if (NULL == val_buffer) {
@@ -331,9 +341,6 @@ extern int fz_fetch_chunks_from_file_cutpoint(
         fclose(fh);
     }
     defer:
-        if (!result && NULL != *missing_chunks){
-            hmfree(*missing_chunks); *missing_chunks = NULL;
-        }
         if (!result && NULL != *cutpoint_map){
             for (size_t i = 0; i < shlenu(*cutpoint_map); i++){
                 fz_cutpoint_list_destroy((*cutpoint_map)[i].value);
@@ -463,11 +470,6 @@ extern int fz_deserialize_response(char *json, fz_chunk_response_t *response){
     defer:
         if (!root) free(root);
         return result;
-}
-
-
-extern int fz_query_required_chunk_list(sqlite3 *db, fz_chunk_t **chunk_buffer, size_t *nchunk){
-    return 0;
 }
 
 

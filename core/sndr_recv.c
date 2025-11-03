@@ -104,7 +104,7 @@ Spawn a process for recieiving the file
 - wait for the request from the sender, by pooling the fifo queue
 - pop the manifest off the fifo
 - try to retrieve the chunks in the manifest file:
-- if the chunk is on the queue pop it and do something with it, when the total chunks need is complete generate the file and validate the file checksum the send the appropriate signal to the sender process via the fifo */
+    if the chunk is on the queue pop it and do something with it, when the total chunks need is complete generate the file and validate the file checksum the send the appropriate signal to the sender process via the fifo */
 extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){    
     int result = 1;
     fz_file_manifest_t mnfst = {0};
@@ -113,8 +113,6 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     char *file_name = NULL;
     char *file_path_buffer = NULL;
     char number_as_str[XXSMALL_RESERVED] = {0};
-    fz_chunk_t *chunk_list = NULL;
-    size_t chunk_size = 0;
     size_t scratchpad_size = LARGE_RESERVED;
 
     char *scratchpad = calloc(scratchpad_size, sizeof(char));
@@ -129,9 +127,6 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     
     if (!fz_channel_read_request(channel, buffer, content_size, scratchpad, scratchpad_size)) RETURN_DEFER(0);
     if (!fz_deserialize_manifest(buffer, &mnfst)) RETURN_DEFER(0);
-
-    /* Read the manifest file and query for the required checksum */
-    if (!fz_query_required_chunk_list(ctx, &chunk_list, &chunk_size)) RETURN_DEFER(0);
 
     if (!get_filename(mnfst.file_name, &file_name)) RETURN_DEFER(0);
 
@@ -148,9 +143,9 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
         if (NULL != content) free(content);
         if (NULL != buffer) free(buffer);
         if (NULL != scratchpad) free(scratchpad);
-        fz_file_manifest_destroy(&mnfst);
         if (NULL != file_name) free(file_name);
         if (NULL != file_path_buffer) free(file_path_buffer);
+        fz_file_manifest_destroy(&mnfst);
         return result;
 }
 
@@ -308,9 +303,9 @@ extern int fz_deserialize_manifest(const char *json, fz_file_manifest_t *mnfst){
     defer:
         if (!result && NULL != file_name) free(file_name);
         if (!result && NULL != chunk_seq) free(chunk_seq);
-        if (!result) fz_file_manifest_destroy(mnfst);
         if (NULL != buffer) free(buffer);
         if (NULL != root) free(root);
+        if (!result) fz_file_manifest_destroy(mnfst);
         return result;
 }
 

@@ -133,8 +133,8 @@ extern int fz_seed_local_file(fz_ctx_t *ctx, const char *src_file_path, int db_c
     // if (!fz_fetch_chunks_from_file_cutpoint(ctx, &file_mnfst, chunk_buffer, file_mnfst.chunk_seq.chunk_seq_len)) RETURN_DEFER(0);
     defer:
         if (NULL != fd) fclose(fd);
-        fz_file_manifest_destroy(&file_mnfst);
         if (NULL != chunk_buffer) free(chunk_buffer);
+        fz_file_manifest_destroy(&file_mnfst);
         return result;
 }
 

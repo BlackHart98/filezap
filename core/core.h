@@ -90,7 +90,7 @@ typedef XXH64_hash_t fz_hex_digest_t;
 
 typedef struct fz_chunk_t{
     fz_hex_digest_t chunk_checksum;
-    const char *src_file_path;
+    char *src_file_path;
     size_t cutpoint;
     size_t chunk_size;
     size_t chunk_index;
@@ -334,7 +334,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
 
 
 /* Query: find required chunk list */
-extern int fz_query_required_chunk_list(sqlite3 *db, fz_chunk_t **chunk_buffer, size_t *nchunk);
+extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk);
 
 
 extern void fz_log(int level, const char *fmt, ...) FZ_PRINTF_FORMAT(2, 3);

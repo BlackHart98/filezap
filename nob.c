@@ -23,6 +23,7 @@ int main(int argc, char *argv[]){
         {.src_file = "core/chunking.c", .target_file = BUILD_PATH"chunking.o"},
         {.src_file = "core/retrieval.c", .target_file = BUILD_PATH"retrieval.o"},
         {.src_file = "core/sndr_recv.c", .target_file = BUILD_PATH"sndr_recv.o"},
+        {.src_file = "core/query_tables.c", .target_file = BUILD_PATH"query_tables.o"},
     };
 
     for (int i = 0; i < NOB_ARRAY_LEN(objects); i++){
