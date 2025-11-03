@@ -127,7 +127,6 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     
     if (!fz_channel_read_request(channel, buffer, content_size, scratchpad, scratchpad_size)) RETURN_DEFER(0);
     if (!fz_deserialize_manifest(buffer, &mnfst)) RETURN_DEFER(0);
-
     if (!get_filename(mnfst.file_name, &file_name)) RETURN_DEFER(0);
 
     file_path_buffer = calloc(RESERVED, sizeof(char));

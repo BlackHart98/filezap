@@ -35,7 +35,6 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
         sqlite3_step(insert);
         sqlite3_reset(insert);
     }
-    sqlite3_finalize(insert);
 
     ret = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
     if (SQLITE_OK != ret) RETURN_DEFER(0);
