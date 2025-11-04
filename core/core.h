@@ -271,7 +271,7 @@ extern void* fz_fetch_chunk(void *);
 /* Fetch file from manifest */ 
 extern int fz_fetch_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue);
 extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, char *file_name);
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue);
+extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct missing_chunks_map_s *missing_chunks);
 
 extern int fz_seed_local_files(fz_ctx_t *ctx, const char *dir);
 extern int fz_seed_local_file(fz_ctx_t *ctx, const char *src_file_path, int db_conn);
