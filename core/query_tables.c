@@ -25,7 +25,7 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
 
     ret = sqlite3_exec(ctx->db, clear_temp_sql, NULL, NULL, NULL);
     if (SQLITE_OK != ret) {
-        fz_log(FZ_INFO, "failed to clear temp table: %s", sqlite3_errmsg(ctx->db));
+        fz_log(FZ_INFO, "Failed to clear temp table: %s", sqlite3_errmsg(ctx->db));
         RETURN_DEFER(0);
     }
 
@@ -41,6 +41,7 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
 
     buffer = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(fz_chunk_t));
     if (NULL == buffer) RETURN_DEFER(0);
+    /* I need to fix this part */
     while (SQLITE_ROW == (ret = sqlite3_step(stmt))){
         fz_hex_digest_t chunk_checksum = (fz_hex_digest_t)sqlite3_column_int64(stmt, 1);
         size_t cutpoint = (size_t)sqlite3_column_int64(stmt, 2);
@@ -48,7 +49,7 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
         const char *file_path = (char *)sqlite3_column_text(stmt, 4);
 
         if (local_nchunk >= mnfst->chunk_seq.chunk_seq_len) {
-            fz_log(FZ_INFO, "more rows returned than expected; ignoring extras");
+            fz_log(FZ_INFO, "More rows returned than expected; ignoring extras");
             break;
         }
 

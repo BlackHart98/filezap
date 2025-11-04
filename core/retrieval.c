@@ -14,7 +14,7 @@ static inline int download_chunks(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue,
 static void* download_chunks_(void *arg);
 
 /* Single threaded download */
-static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst, struct missing_chunks_map_s *missing_chunks);
+static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst);
 
 
 /* The file retrieval step is a all-or-nothing step i.e. for all the file to be successfully retrieved 
@@ -41,19 +41,19 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         RETURN_DEFER(0);
     }
 
-    /* Todo: revisit this multithreaded fetch */
-    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq)){
-        fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
-        RETURN_DEFER(0);
-    }
     if (!fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size)) RETURN_DEFER(0);
     if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, &cutpoint_map, &missing_chunks)){
+        RETURN_DEFER(0);
+    }
+    /* Todo: revisit this multithreaded fetch */
+    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, missing_chunks)){
+        fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
         RETURN_DEFER(0);
     }
 
     fz_log(FZ_INFO, "File from cutpoint successful");
     /* Todo: revisit this multithreaded download */
-    if (!download_chunks_st(ctx, &dq, channel, mnfst, missing_chunks)){
+    if (!download_chunks_st(ctx, &dq, channel, mnfst)){
         fz_log(FZ_ERROR, "Something went wrong while trying to download missing chunk");
         RETURN_DEFER(0);
     }
@@ -92,6 +92,15 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         RETURN_DEFER(0);
     }
 
+    size_t count = 0;
+    for (size_t i = 0; i < hmlenu(missing_chunks); i++){
+        fz_hex_digest_t key = missing_chunks[i].key;
+        if (1 == hmget(missing_chunks, key)){
+            fz_log(FZ_INFO, "chunk checksum: %llu", key);
+            count++;
+        }
+    }
+    fz_log(FZ_INFO, "Here are the missing chunks size(%lu): ", count);
     defer:
         /* Notify sender that the files have been sent successfully 
         Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
@@ -120,7 +129,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
 }
 
 
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue){
+extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct missing_chunks_map_s *missing_chunks){
     (void)channel;
     int result = 1;
     char *scratchpad = NULL;
@@ -137,12 +146,9 @@ extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     if (NULL == missing_index) RETURN_DEFER(0);
 
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        // fz_log(FZ_INFO, "Trying to fetch chunk from file cutpoint");
-    }
-
-    for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         if (!fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad, scratchpad_size)){
-            if (!fetch_chunk_from_source((fz_ctx_desc_t)ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) 
+            if (0 == hmget(missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
+            else if (!fetch_chunk_from_source((fz_ctx_desc_t)ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) 
                 RETURN_DEFER(0);
         }
     }
@@ -531,7 +537,7 @@ static void* download_chunks_(void *arg){
 }
 
 
-static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst, struct missing_chunks_map_s *missing_chunks){
+static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst){
     int result = 1;
     char *json = NULL;
     size_t content_size = 0;
