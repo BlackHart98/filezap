@@ -1,6 +1,6 @@
 #include "core.h"
 
-extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk){
+extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s **missing_chunks){
     int result = 1;
     fz_chunk_t *buffer = NULL;
     size_t local_nchunk = 0;
@@ -31,9 +31,12 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
 
     sqlite3_prepare_v2(ctx->db, insert_sql, -1, &insert, NULL);
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        sqlite3_bind_int64(insert, 1, mnfst->chunk_seq.chunk_checksum[i]);
-        sqlite3_step(insert);
-        sqlite3_reset(insert);
+        if (0 == hmget(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
+        else {
+            sqlite3_bind_int64(insert, 1, mnfst->chunk_seq.chunk_checksum[i]);
+            sqlite3_step(insert);
+            sqlite3_reset(insert);
+        }
     }
 
     ret = sqlite3_prepare_v2(ctx->db, sql, -1, &stmt, NULL);
@@ -64,7 +67,7 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
     if (SQLITE_DONE != ret) RETURN_DEFER(0);
     *nchunk = local_nchunk;
     *chunk_buffer = buffer;
-    fz_log(FZ_INFO, "chunk size: %lu", local_nchunk);
+    fz_log(FZ_INFO, "Found chunk size: %lu", local_nchunk);
     defer:
         if (NULL != insert) sqlite3_finalize(insert);
         if (NULL != stmt) sqlite3_finalize(stmt);

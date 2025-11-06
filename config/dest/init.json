@@ -1,0 +1,9 @@
+{
+    "metadata_loc": "dtmp/",
+    "strategy" : 1,
+    "target_dir" : "examples/dest/",
+    "database_path" : "filezap.db",
+    "workers" : 3,
+    "chunk_size" : 65536,
+    "prefetch_size" : 4
+}

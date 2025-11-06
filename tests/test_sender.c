@@ -16,7 +16,8 @@ int main(int argc, char *argv[]){
 
     glob_CHUNKING_STRATEGY = FZ_FIXED_SIZED_CHUNK;
     // const char *input_file = "examples/src/Endless, a film by Frank Ocean.mp4";
-    const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
+    // const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
+    const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra).mp4";
 
     /* Sender device */
     fz_ctx_t snd_fz = {0};

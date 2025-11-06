@@ -66,10 +66,7 @@ extern int fz_seed_local_files(fz_ctx_t *ctx, const char *dir){
     close db connection
     */
     int result = 1;
-    int sd = fz_open_db_session(ctx);
-    if (-1 == sd) RETURN_DEFER(0);
     defer:
-        fz_close_db_session(ctx, sd);
         return result;
 }
 
@@ -88,7 +85,6 @@ extern int fz_seed_local_file(fz_ctx_t *ctx, const char *src_file_path, int db_c
     char *buffer = NULL;
     size_t buf_len = 0;
     fz_chunk_t *chunk_buffer = NULL;
-    // fz_chunk_dlist_t chunk_dlist = {0};
 
     if (!fz_file_manifest_init(&file_mnfst)){
         fz_log(FZ_ERROR, "Unable to initialize manifest file");

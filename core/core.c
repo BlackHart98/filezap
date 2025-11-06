@@ -177,7 +177,7 @@ extern int fz_dequeue(fz_ringbuffer_t *ring_buffer, fz_chunk_request_t *item){
 }
 
 
-extern int fz_dyn_enqueue_init(fz_dyn_queue_t *dyn_queue, size_t capacity){ 
+extern int fz_dyn_queue_init(fz_dyn_queue_t *dyn_queue, size_t capacity){ 
     assert((0 < capacity)&&"Capacity should be greater than zero");
     dyn_queue->buffer = (fz_chunk_response_t *)calloc(capacity, sizeof(fz_chunk_response_t));
     if (NULL == dyn_queue->buffer) return 0;
@@ -269,14 +269,6 @@ extern void fz_log(int level, const char *fmt, ...){
     fprintf(stderr, "\n");
 }
 
-
-extern int fz_open_db_session(fz_ctx_t *ctx){
-    return -1;
-}
-
-
-extern void fz_close_db_session(fz_ctx_t *ctx, int sd){
-}
 
 extern int fz_commit_chunk_meta(fz_file_manifest_t *file_mnfst, int db_conn){
     return 0;

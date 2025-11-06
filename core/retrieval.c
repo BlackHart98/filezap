@@ -28,25 +28,19 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     size_t flag = 0;
     struct cutpoint_map_s *cutpoint_map = NULL;
     struct missing_chunks_map_s *missing_chunks = NULL;
-    fz_chunk_t *chunk_list = NULL;
-    size_t chunk_size = 0;
 
     hmdefault(missing_chunks, 1);
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         hmput(missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 1);
     }
 
-    if(!fz_dyn_enqueue_init(&dq, RESERVED)){
+    if(!fz_dyn_queue_init(&dq, RESERVED)){
         fz_log(FZ_ERROR, "Out of memory ah error!");
         RETURN_DEFER(0);
     }
 
-    if (!fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size)) RETURN_DEFER(0);
-    if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, &cutpoint_map, &missing_chunks)){
-        RETURN_DEFER(0);
-    }
     /* Todo: revisit this multithreaded fetch */
-    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, missing_chunks)){
+    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, &cutpoint_map, &missing_chunks)){
         fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
         RETURN_DEFER(0);
     }
@@ -59,7 +53,10 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     }
 
     dest_fh = fopen(file_name, "a+");
-    if (NULL == dest_fh) RETURN_DEFER(0);
+    if (NULL == dest_fh) {
+        fz_log(FZ_INFO, "Destination handle fail");
+        RETURN_DEFER(0);
+    }
 
     // truncate file
     if (-1 == ftruncate(fileno(dest_fh), 0)) RETURN_DEFER(0);
@@ -96,7 +93,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     for (size_t i = 0; i < hmlenu(missing_chunks); i++){
         fz_hex_digest_t key = missing_chunks[i].key;
         if (1 == hmget(missing_chunks, key)){
-            fz_log(FZ_INFO, "chunk checksum: %llu", key);
+            // fz_log(FZ_INFO, "chunk checksum: %llu", key);
             count++;
         }
     }
@@ -118,24 +115,20 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
             }
             shfree(cutpoint_map);
         }
-        if (NULL != chunk_list) {
-            for(size_t i = 0; i < chunk_size; i++){
-                if (NULL != chunk_list[i].src_file_path) free((char *)chunk_list[i].src_file_path);
-            }
-            free(chunk_list);
-        }
         fz_dyn_enqueue_destroy(&dq);
         return result;
 }
 
 
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct missing_chunks_map_s *missing_chunks){
+extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks){
     (void)channel;
     int result = 1;
     char *scratchpad = NULL;
     size_t scratchpad_size = RESERVED;
     fz_chunk_seq_t *chunk_seq = NULL;
     size_t *missing_index = NULL;
+    fz_chunk_t *chunk_list = NULL;
+    size_t chunk_size = 0;
 
     scratchpad = calloc(scratchpad_size, sizeof(char));
     if (NULL == scratchpad) RETURN_DEFER(0);
@@ -144,18 +137,27 @@ extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     missing_index = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(size_t));
     if (NULL == chunk_seq) RETURN_DEFER(0);
     if (NULL == missing_index) RETURN_DEFER(0);
-
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        if (!fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad, scratchpad_size)){
-            if (0 == hmget(missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
-            else if (!fetch_chunk_from_source((fz_ctx_desc_t)ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) 
-                RETURN_DEFER(0);
+        if (fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad, scratchpad_size)){
+            hmput(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 0);
         }
+    }
+    if (!fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size, missing_chunks)) RETURN_DEFER(0);
+    if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, cutpoint_map, missing_chunks)) RETURN_DEFER(0);
+    for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
+        if (0 == hmget(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
+        else if (!fetch_chunk_from_source((fz_ctx_desc_t)ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) RETURN_DEFER(0);
     }
     defer:
         if (NULL != scratchpad) free(scratchpad);
         if (NULL != chunk_seq) free(chunk_seq);
         if (NULL != missing_index) free(missing_index);
+        if (NULL != chunk_list) {
+            for(size_t i = 0; i < chunk_size; i++){
+                if (NULL != chunk_list[i].src_file_path) free((char *)chunk_list[i].src_file_path);
+            }
+            free(chunk_list);
+        }
         return result;
 }
 
@@ -315,6 +317,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
         fz_cutpoint_list_t *val_buffer = (*cutpoint_map)[i].value;
         // fz_log(FZ_INFO, "Open file `%s`", scvg_file_path);
         FILE *fh = fopen(scvg_file_path, "rb");
+        if (NULL == fh) RETURN_DEFER(0);
         for (size_t j = 0; j < val_buffer->cutpoint_len; j++){
             if (fseek(fh, val_buffer->cutpoint[j], SEEK_SET) < 0) RETURN_DEFER(0);
             if (max_alloc < val_buffer->chunk_size[j]){
@@ -322,20 +325,19 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 if (NULL == buffer) RETURN_DEFER(0);
                 max_alloc = val_buffer->chunk_size[j];
             }
-            int8_t not_found = hmget(*missing_chunks, val_buffer->buffer[j]);
-            if (!not_found) continue;
 
             memset(buffer, 0, max_alloc);
-            size_t ret = fread(buffer, 1, val_buffer->chunk_size[j], fh);
+            // size_t ret = fread(buffer, 1, val_buffer->chunk_size[j], fh);
+            fread(buffer, 1, val_buffer->chunk_size[j], fh);
             size_t min = val_buffer->chunk_size[j];
             xxhash_hexdigest(buffer, val_buffer->chunk_size[j], &digest);
             if (digest != val_buffer->buffer[j]){
                 hmput(*missing_chunks, digest, 1);
-                RETURN_DEFER(0);
+                fclose(fh); RETURN_DEFER(0);
             } else {
                 snprintf(temp, 17, "%016llx", digest);
                 memcpy(&chunk_loc_buffer[strlen(ctx->metadata_loc)], temp, 17);
-                
+                // fz_log(FZ_INFO, "Chunk location: %s", chunk_loc_buffer);
                 FILE *d_fh = fopen(chunk_loc_buffer, "wb");
                 if (NULL == d_fh) RETURN_DEFER(0);
                 fwrite(buffer, 1, min, d_fh);
