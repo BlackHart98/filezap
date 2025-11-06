@@ -29,6 +29,7 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
 
     size_t content_size = 0;
     if (!fz_serialize_manifest(&mnfst, &buffer, &content_size)) RETURN_DEFER(0);
+    if (0 == content_size || MAX_MANIFEST_SIZE < content_size) RETURN_DEFER(0);
 
     char number_as_str[XXSMALL_RESERVED] = {0};
     snprintf(number_as_str, XXSMALL_RESERVED, "%lu", content_size);
@@ -108,7 +109,6 @@ Spawn a process for recieiving the file
 extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){    
     int result = 1;
     fz_file_manifest_t mnfst = {0};
-    char *content = NULL;
     char *buffer = NULL;
     char *file_name = NULL;
     char *file_path_buffer = NULL;
@@ -120,6 +120,7 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
 
     if (!fz_channel_read_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)) RETURN_DEFER(0);
     size_t content_size = strtoul(number_as_str, NULL, 10);
+    if (0 == content_size || MAX_MANIFEST_SIZE < content_size) RETURN_DEFER(0);
 
     fz_log(FZ_INFO, "Received manifest json content size: %lukb", content_size/1024);
     buffer = calloc(content_size, sizeof(char));
@@ -141,7 +142,6 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     /* Commit new chunk metadata, for now this is just a stub */
     if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
     defer:
-        if (NULL != content) free(content);
         if (NULL != buffer) free(buffer);
         if (NULL != scratchpad) free(scratchpad);
         if (NULL != file_name) free(file_name);

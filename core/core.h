@@ -41,6 +41,7 @@
 #define LARGE_RESERVED KB(4)
 #define XSMALL_RESERVED 256
 #define XXSMALL_RESERVED 128
+#define MAX_MANIFEST_SIZE MB(64)
 
 #define RETURN_DEFER(val) do{result = val; goto defer;} while(0)
 #define SERIALIZE_CHUNK(buffer, chunk_checksum, cutpoint, chunk_size)\
