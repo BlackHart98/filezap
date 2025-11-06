@@ -300,7 +300,7 @@ extern int fz_dyn_enqueue(fz_dyn_queue_t *dyn_queue, fz_chunk_response_t item);
 extern int fz_dyn_dequeue(fz_dyn_queue_t *dyn_queue, fz_chunk_response_t *item);
 extern int fz_dyn_queue_empty(const fz_dyn_queue_t *dq);
 extern int fz_dyn_queue_full(const fz_dyn_queue_t *dq);
-extern void fz_dyn_enqueue_destroy(fz_dyn_queue_t *dyn_queue);
+extern void fz_dyn_queue_destroy(fz_dyn_queue_t *dyn_queue);
 
 
 extern void xxhash_hexdigest(char *buffer, size_t stream_len, fz_hex_digest_t *digest);
@@ -333,6 +333,9 @@ extern int fz_fetch_chunks_from_file_cutpoint(
 
 /* Query: find required chunk list */
 extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s **missing_chunks);
+
+
+extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, char *dest_file_path);
 
 
 extern void fz_log(int level, const char *fmt, ...) FZ_PRINTF_FORMAT(2, 3);

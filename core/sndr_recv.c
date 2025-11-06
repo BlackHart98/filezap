@@ -137,6 +137,9 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     fz_log(FZ_INFO, "File path: %s", file_path_buffer);
     if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
     fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
+
+    /* Commit new chunk metadata, for now this is just a stub */
+    if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
     defer:
         if (NULL != content) free(content);
         if (NULL != buffer) free(buffer);

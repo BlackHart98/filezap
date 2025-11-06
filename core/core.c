@@ -188,7 +188,7 @@ extern int fz_dyn_queue_init(fz_dyn_queue_t *dyn_queue, size_t capacity){
 }
 
 
-extern void fz_dyn_enqueue_destroy(fz_dyn_queue_t *dyn_queue){
+extern void fz_dyn_queue_destroy(fz_dyn_queue_t *dyn_queue){
     dyn_queue->front = 0;
     dyn_queue->rear = 0;
     pthread_mutex_destroy(&dyn_queue->mtx);

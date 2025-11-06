@@ -44,6 +44,7 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
 
     buffer = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(fz_chunk_t));
     if (NULL == buffer) RETURN_DEFER(0);
+    size_t max_alloc = mnfst->chunk_seq.chunk_seq_len;
     /* I need to fix this part */
     while (SQLITE_ROW == (ret = sqlite3_step(stmt))){
         fz_hex_digest_t chunk_checksum = (fz_hex_digest_t)sqlite3_column_int64(stmt, 1);
@@ -51,9 +52,11 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
         size_t chunk_size = (size_t)sqlite3_column_int64(stmt, 3);
         const char *file_path = (char *)sqlite3_column_text(stmt, 4);
 
-        if (local_nchunk >= mnfst->chunk_seq.chunk_seq_len) {
-            fz_log(FZ_INFO, "More rows returned than expected; ignoring extras");
-            break;
+        /* resize the buffer if allocated space exceeded */
+        if (local_nchunk >= max_alloc) {
+            max_alloc <<= 1;
+            buffer = realloc(buffer, max_alloc * sizeof(fz_chunk_t));
+            if (NULL == buffer) RETURN_DEFER(0);
         }
 
         buffer[local_nchunk].chunk_checksum = chunk_checksum;
@@ -77,5 +80,16 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
             }
             free(buffer);
         }
+        return result;
+}
+
+
+extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, char *dest_file_path){
+    int result = 1;
+    
+    // for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
+    //     fz_log(FZ_INFO, "");
+    // }
+    defer:
         return result;
 }

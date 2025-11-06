@@ -115,7 +115,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
             }
             shfree(cutpoint_map);
         }
-        fz_dyn_enqueue_destroy(&dq);
+        fz_dyn_queue_destroy(&dq);
         return result;
 }
 
@@ -282,7 +282,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     int result = 1;
     char *buffer = NULL;
     char *chunk_loc_buffer = NULL;
-    /* This is wasteful, use a resizable arena allocator */
+    /* This is wasteful, use a resizable arena allocator; create a map from file to the chunk cutpoint */
     shdefault(*cutpoint_map, NULL);
     for (size_t i = 0; i < nchunk; i++){
         fz_cutpoint_list_t *val_buffer =(fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
@@ -334,6 +334,9 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 hmput(*missing_chunks, digest, 1);
                 fclose(fh); RETURN_DEFER(0);
             } else {
+                int8_t ret = hmget(*missing_chunks, val_buffer->buffer[j]);
+                if (ret) continue;
+                
                 snprintf(temp, 17, "%016llx", digest);
                 memcpy(&chunk_loc_buffer[strlen(ctx->metadata_loc)], temp, 17);
                 // fz_log(FZ_INFO, "Chunk location: %s", chunk_loc_buffer);
