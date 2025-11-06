@@ -283,7 +283,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     char *buffer = NULL;
     char *chunk_loc_buffer = NULL;
     /* This is wasteful, use a resizable arena allocator */
-    shdefault(*cutpoint_map, NULL); /*hmdefault(*missing_chunks, 1);*/
+    shdefault(*cutpoint_map, NULL);
     for (size_t i = 0; i < nchunk; i++){
         fz_cutpoint_list_t *val_buffer =(fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
         if (NULL == val_buffer) {
@@ -327,7 +327,6 @@ extern int fz_fetch_chunks_from_file_cutpoint(
             }
 
             memset(buffer, 0, max_alloc);
-            // size_t ret = fread(buffer, 1, val_buffer->chunk_size[j], fh);
             fread(buffer, 1, val_buffer->chunk_size[j], fh);
             size_t min = val_buffer->chunk_size[j];
             xxhash_hexdigest(buffer, val_buffer->chunk_size[j], &digest);

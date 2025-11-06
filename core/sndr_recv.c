@@ -136,7 +136,6 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     snprintf(file_path_buffer, RESERVED, "%s%s", ctx->target_dir, file_name);
     fz_log(FZ_INFO, "File path: %s", file_path_buffer);
     if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
-
     fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
     defer:
         if (NULL != content) free(content);

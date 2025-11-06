@@ -163,17 +163,13 @@ static inline int fz_chunking_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file
     if (NULL == chunk_loc_buffer) RETURN_DEFER(0);
 
     strncat(chunk_loc_buffer, ctx->metadata_loc, sizeof(ctx->metadata_loc));
-
     size_t allocation_size = (size_t)((file_size / chunk_size) + chunk_size);
 
     file_mnfst->chunk_seq.chunk_checksum = (fz_hex_digest_t *)calloc(allocation_size, sizeof(fz_hex_digest_t));
     file_mnfst->chunk_seq.cutpoint = (size_t *)calloc(allocation_size, sizeof(size_t));
     file_mnfst->chunk_seq.chunk_size = (size_t *)calloc(allocation_size, sizeof(size_t));
 
-    if (NULL == file_mnfst->chunk_seq.chunk_checksum 
-        || NULL == file_mnfst->chunk_seq.cutpoint 
-        || NULL == file_mnfst->chunk_seq.chunk_size
-    ){
+    if (NULL == file_mnfst->chunk_seq.chunk_checksum || NULL == file_mnfst->chunk_seq.cutpoint || NULL == file_mnfst->chunk_seq.chunk_size){
         RETURN_DEFER(0);
     }
 
@@ -210,7 +206,6 @@ static inline int fz_chunking_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file
 
     memcpy(file_name, src_file_path, strlen(src_file_path) + 1);
     // fz_log(FZ_INFO, "Source file path: %s, %s", src_file_path, file_name);
-
     file_mnfst->file_name = file_name;
     file_mnfst->file_size = file_size;
     defer:
@@ -232,7 +227,6 @@ static inline int fz_seeding_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file_
     
     block = (char *)calloc(ctx->ctx_attrs.in_mem_buffer, sizeof(char));
     if (NULL == block) RETURN_DEFER(0);
-
     size_t allocation_size = (size_t)((file_size / chunk_size) + chunk_size);
 
     file_mnfst->chunk_seq.chunk_checksum = (fz_hex_digest_t *)calloc(allocation_size, sizeof(fz_hex_digest_t));
@@ -242,7 +236,6 @@ static inline int fz_seeding_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file_
     if (NULL == file_mnfst->chunk_seq.chunk_checksum || NULL == file_mnfst->chunk_seq.cutpoint || NULL == file_mnfst->chunk_seq.chunk_size){
         RETURN_DEFER(0);
     }
-
     size_t size_read;
     /* I will move this out of here */
     while((size_read = fread(block, 1, ctx->ctx_attrs.in_mem_buffer, input_fd)) > 0){
@@ -266,9 +259,7 @@ static inline int fz_seeding_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file_
 
     memcpy(file_name, src_file_path, strlen(src_file_path) + 1);
 
-    // file_mnfst->file_name = src_file_path;
     file_mnfst->file_size = file_size;
-
     defer:
         if (NULL != block) free(block);
         if(!result) fz_file_manifest_destroy(file_mnfst);
