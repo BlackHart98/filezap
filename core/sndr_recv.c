@@ -139,17 +139,17 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     fz_log(FZ_INFO, "File path: %s", file_path_buffer);
 
     /* Todo: Verify if file exists, if it exists fail */
-    struct stat file_info;
-    if (0 == stat(file_path_buffer, &file_info)){
-        fz_log(FZ_ERROR, "File already exists");
-        RETURN_DEFER(0);
-    }
+    // struct stat file_info;
+    // if (0 == stat(file_path_buffer, &file_info)){
+    //     fz_log(FZ_ERROR, "File already exists");
+    //     RETURN_DEFER(0);
+    // }
 
     if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
     fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
 
     /* Commit new chunk metadata, for now this is just a stub */
-    if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
+    // if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
     defer:
         /* Notify sender that the files have been sent successfully 
         Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.

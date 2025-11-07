@@ -276,7 +276,6 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     char *buffer = NULL;
     char *chunk_loc_buffer = NULL;
     /* This is wasteful, use a resizable arena allocator; create a map from file to the chunk cutpoint */
-    shdefault(*cutpoint_map, NULL);
     for (size_t i = 0; i < nchunk; i++){
         fz_cutpoint_list_t *val_buffer =(fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
         if (NULL == val_buffer) {
@@ -286,6 +285,9 @@ extern int fz_fetch_chunks_from_file_cutpoint(
             val_buffer->chunk_size = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(size_t));
             val_buffer->cutpoint = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(size_t));
             if (NULL == val_buffer->buffer || NULL == val_buffer->chunk_size || NULL == val_buffer->cutpoint) {
+                if (NULL != val_buffer->buffer) {free(val_buffer->buffer); val_buffer->buffer= NULL;}
+                if (NULL != val_buffer->chunk_size) {free(val_buffer->chunk_size); val_buffer->chunk_size = NULL;}
+                if (NULL != val_buffer->cutpoint) {free(val_buffer->cutpoint); val_buffer->cutpoint = NULL;}
                 free(val_buffer); RETURN_DEFER(0);
             }
         }
@@ -327,9 +329,6 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 hmput(*missing_chunks, digest, 1);
                 fclose(fh); RETURN_DEFER(0);
             } else {
-                int8_t ret = hmget(*missing_chunks, val_buffer->buffer[j]);
-                if (0 == ret) continue;
-
                 snprintf(temp, 17, "%016llx", digest);
                 memcpy(&chunk_loc_buffer[strlen(ctx->metadata_loc)], temp, 17);
                 // fz_log(FZ_INFO, "Chunk location: %s", chunk_loc_buffer);
@@ -344,12 +343,6 @@ extern int fz_fetch_chunks_from_file_cutpoint(
         fclose(fh);
     }
     defer:
-        if (!result && NULL != *cutpoint_map){
-            for (size_t i = 0; i < shlenu(*cutpoint_map); i++){
-                fz_cutpoint_list_destroy((*cutpoint_map)[i].value);
-            }
-            shfree(*cutpoint_map); *cutpoint_map = NULL;
-        }
         if (NULL != buffer) free(buffer);
         if (NULL != chunk_loc_buffer) free(chunk_loc_buffer);
         return result;
