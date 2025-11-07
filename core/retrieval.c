@@ -25,7 +25,6 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     char *buffer = NULL;
     FILE *dest_fh = NULL;
     fz_dyn_queue_t dq = {0};
-    size_t flag = 0;
     struct cutpoint_map_s *cutpoint_map = NULL;
     struct missing_chunks_map_s *missing_chunks = NULL;
 
@@ -99,12 +98,6 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     }
     fz_log(FZ_INFO, "Here are the missing chunks size(%lu): ", count);
     defer:
-        /* Notify sender that the files have been sent successfully 
-        Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
-        This will improve visibilty of the file transfer process to the sender */
-        flag = 1;
-        SEND_CONN_FLAG(flag); /* Non-zero indicates close connection: This is not a very good idea */
-
         if (NULL != fh) fclose(fh);
         if (NULL != buffer) free(buffer);
         if (NULL != dest_fh) fclose(dest_fh);
@@ -335,8 +328,8 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 fclose(fh); RETURN_DEFER(0);
             } else {
                 int8_t ret = hmget(*missing_chunks, val_buffer->buffer[j]);
-                if (ret) continue;
-                
+                if (0 == ret) continue;
+
                 snprintf(temp, 17, "%016llx", digest);
                 memcpy(&chunk_loc_buffer[strlen(ctx->metadata_loc)], temp, 17);
                 // fz_log(FZ_INFO, "Chunk location: %s", chunk_loc_buffer);
@@ -598,7 +591,6 @@ static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_que
             fclose(chnk_fh);
         } else {
             assert(0&&"Unreachable!");
-            break;
         }
         count++;
     }

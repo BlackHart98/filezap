@@ -114,6 +114,7 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     char *file_path_buffer = NULL;
     char number_as_str[XXSMALL_RESERVED] = {0};
     size_t scratchpad_size = LARGE_RESERVED;
+    size_t flag = 0;
 
     char *scratchpad = calloc(scratchpad_size, sizeof(char));
     if (NULL == scratchpad) RETURN_DEFER(0);
@@ -136,12 +137,26 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     /* Todo: Use an actual string object */
     snprintf(file_path_buffer, RESERVED, "%s%s", ctx->target_dir, file_name);
     fz_log(FZ_INFO, "File path: %s", file_path_buffer);
+
+    /* Todo: Verify if file exists, if it exists fail */
+    struct stat file_info;
+    if (0 == stat(file_path_buffer, &file_info)){
+        fz_log(FZ_ERROR, "File already exists");
+        RETURN_DEFER(0);
+    }
+
     if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
     fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
 
     /* Commit new chunk metadata, for now this is just a stub */
     if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
     defer:
+        /* Notify sender that the files have been sent successfully 
+        Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
+        This will improve visibilty of the file transfer process to the sender */
+        flag = 1;
+        SEND_CONN_FLAG(flag); /* Non-zero indicates close connection: This is not a very good idea */
+
         if (NULL != buffer) free(buffer);
         if (NULL != scratchpad) free(scratchpad);
         if (NULL != file_name) free(file_name);
@@ -309,6 +324,7 @@ extern int fz_deserialize_manifest(const char *json, fz_file_manifest_t *mnfst){
         if (!result) fz_file_manifest_destroy(mnfst);
         return result;
 }
+
 
 /* Add a scratchpad for reader */
 extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t data_size){

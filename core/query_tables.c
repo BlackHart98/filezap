@@ -86,10 +86,26 @@ extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst
 
 extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, char *dest_file_path){
     int result = 1;
-    
-    // for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-    //     fz_log(FZ_INFO, "");
-    // }
+    sqlite3_stmt *insert = NULL;
+    const char *insert_sql = "INSERT INTO filezap_chunks (chunk_checksum, cutpoint, chunk_size, file_path) VALUES (?,?,?,?);";
+
+    fz_log(FZ_INFO, "Commit chunk metadata");
+    sqlite3_exec(ctx->db, "BEGIN TRANSACTION;", NULL, NULL, NULL);
+    sqlite3_prepare_v2(ctx->db, insert_sql, -1, &insert, NULL);
+    for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
+        sqlite3_bind_int64(insert, 1, mnfst->chunk_seq.chunk_checksum[i]);
+        sqlite3_bind_int64(insert, 2, mnfst->chunk_seq.cutpoint[i]);
+        sqlite3_bind_int64(insert, 3, mnfst->chunk_seq.chunk_size[i]);
+        sqlite3_bind_text(insert, 4, dest_file_path, -1, SQLITE_TRANSIENT);
+        if (SQLITE_DONE != sqlite3_step(insert)) {
+            fz_log(FZ_ERROR, "Insert failed for chunk %zu: %s", i, sqlite3_errmsg(ctx->db));
+            sqlite3_exec(ctx->db, "ROLLBACK;", NULL, NULL, NULL);
+            RETURN_DEFER(0);
+        }
+        sqlite3_reset(insert);
+    }
+    sqlite3_exec(ctx->db, "COMMIT;", NULL, NULL, NULL);
     defer:
+        if (NULL != insert) sqlite3_finalize(insert);
         return result;
 }
