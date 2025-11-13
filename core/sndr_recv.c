@@ -5,22 +5,21 @@
 
 static inline int get_filename(const char *file_path, char **file_name);
 
-/* 
-Spawn a process for sending the file push the manifest into the fifo queue wait for a response from the receive if signal received do the following:
-- signal done: file request complete, exit with success
-- signal done_with_issues: file request complete, exit with error
-- signal fetch_chunk: push chunk to fifo */
+/* This is better version of the original send_file, there is not physical copy deposits in the sender cache folder */
 extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path){
     int result = 1;
     fz_file_manifest_t mnfst = {0};
     char *buffer = NULL;
     char *response_buffer = NULL;
     char *content_buffer = NULL;
-    FILE *chnk_fh = NULL;
     size_t scratchpad_size = LARGE_RESERVED;
+    FILE *src_fh = NULL;
 
     char *scratchpad = calloc(scratchpad_size, sizeof(char));
-    if (NULL == scratchpad) RETURN_DEFER(0);
+    if (NULL == scratchpad) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     if (!fz_chunk_file(ctx, &mnfst, src_file_path)){
         fz_log(FZ_ERROR, "%s: Failed to chunk file `%s`", __func__, src_file_path);
@@ -28,26 +27,47 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
     }
 
     size_t content_size = 0;
-    if (!fz_serialize_manifest(&mnfst, &buffer, &content_size)) RETURN_DEFER(0);
-    if (0 == content_size || MAX_MANIFEST_SIZE < content_size) RETURN_DEFER(0);
+    if (!fz_serialize_manifest(&mnfst, &buffer, &content_size)) {
+        fz_log(FZ_ERROR, "Failed to serialize manifest file");
+        RETURN_DEFER(0);
+    }
+    if (0 == content_size || MAX_MANIFEST_SIZE < content_size) {
+        fz_log(FZ_ERROR, "Content size of the manifest file violates the accepted boundary 0 < content_size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
+        RETURN_DEFER(0);
+    }
 
     char number_as_str[XXSMALL_RESERVED] = {0};
     snprintf(number_as_str, XXSMALL_RESERVED, "%lu", content_size);
 
-    if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED)) RETURN_DEFER(0);
-    if (!fz_channel_write_request(channel, buffer, content_size)) RETURN_DEFER(0);
+    if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED)) {
+        fz_log(FZ_ERROR, "Failed to send content size data to destination");
+        RETURN_DEFER(0);
+    }
+    if (!fz_channel_write_request(channel, buffer, content_size)) {
+        fz_log(FZ_ERROR, "Failed to send serialized manifest data to destination");
+        RETURN_DEFER(0);
+    }
     
     /* Waiting for response from the reciever, todo: remove unnecessary memset */
     size_t flag = 0;
     size_t alloc_size = XSMALL_RESERVED;
     size_t chunk_max_alloc = 0;
     response_buffer = calloc(alloc_size, sizeof(char));
-    if (NULL == response_buffer) RETURN_DEFER(0);
+    if (NULL == response_buffer) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    src_fh = fopen(src_file_path, "rb");
+    if (NULL == src_fh) {
+        fz_log(FZ_ERROR, "Failed to open source file `%s` for read", src_file_path);
+        RETURN_DEFER(0);
+    }
     while (1){
         /* Flag to control connection */
         do {
             char number_as_str[XXSMALL_RESERVED] = {0};
             if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)){
+                fz_log(FZ_ERROR, "Somthing went wrong while trying read control flag data");
                 RETURN_DEFER(0);
             }
             flag = strtoul(number_as_str, NULL, 10);
@@ -58,10 +78,13 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
             RETURN_DEFER(0);
         }
         content_size = strtoul(number_as_str, NULL, 10);
-
+        if (0 == content_size || MAX_MANIFEST_SIZE < content_size) {
+            fz_log(FZ_ERROR, "Content size of the chunk violates the accepted boundary 0 < content_size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
+            RETURN_DEFER(0);
+        }
         if (alloc_size < content_size){
             response_buffer = realloc(response_buffer, content_size);
-            if (NULL == response_buffer) RETURN_DEFER(0);
+            if (NULL == response_buffer) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
             alloc_size = content_size;
         }
         if (!fz_channel_read_response(channel, response_buffer, alloc_size, scratchpad, scratchpad_size)){
@@ -74,23 +97,24 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
         size_t chunk_size = mnfst.chunk_seq.chunk_size[val.chunk_index];
         if (chunk_max_alloc < chunk_size){
             content_buffer = realloc(content_buffer, chunk_size);
-            if (NULL == content_buffer) RETURN_DEFER(0);
+            if (NULL == content_buffer) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
             chunk_max_alloc = chunk_size;
         }
-        char temp_loc[XXSMALL_RESERVED] = {0};
-        snprintf(temp_loc, XXSMALL_RESERVED, "%s%016llx", ctx->metadata_loc, val.checksum);
-        chnk_fh = fopen(temp_loc, "rb");
-        if (NULL == chnk_fh) RETURN_DEFER(0);
-        fread(content_buffer, 1, chunk_size, chnk_fh);
-        fclose(chnk_fh);
+        memset(content_buffer, 0, chunk_max_alloc);
+        size_t cutpoint = mnfst.chunk_seq.cutpoint[val.chunk_index];
+        if (fseek(src_fh, cutpoint, SEEK_SET) < 0) RETURN_DEFER(0);
+        fread(content_buffer, 1, chunk_size, src_fh);
 
         if (!fz_channel_write_request(channel, content_buffer, chunk_size)){
+            fz_log(FZ_ERROR, "Failed to send chunk to destination");
             RETURN_DEFER(0);
         }
+
     }
     fz_log(FZ_INFO, "Closing connection");
     defer:
         fz_log(FZ_INFO, "Closed connection");
+        if (NULL != src_fh) fclose(src_fh);
         if (NULL != response_buffer) free(response_buffer);
         if (NULL != content_buffer) free(content_buffer);
         if (NULL != buffer) free(buffer);
@@ -138,18 +162,11 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     snprintf(file_path_buffer, RESERVED, "%s%s", ctx->target_dir, file_name);
     fz_log(FZ_INFO, "File path: %s", file_path_buffer);
 
-    /* Todo: Verify if file exists, if it exists fail */
-    // struct stat file_info;
-    // if (0 == stat(file_path_buffer, &file_info)){
-    //     fz_log(FZ_ERROR, "File already exists");
-    //     RETURN_DEFER(0);
-    // }
-
     if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
     fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
 
-    /* Commit new chunk metadata, for now this is just a stub */
-    // if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
+    /* Commit new chunk metadata, for now this is just a stub, I have to move thi out of here */
+    if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
     defer:
         /* Notify sender that the files have been sent successfully 
         Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
@@ -169,10 +186,10 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
 extern int fz_serialize_manifest(fz_file_manifest_t *mnfst, char **json, size_t *json_size){
     int result = 1;
     char *chunk_seq = NULL;
-    int64_t alloc_size = KB(64);
+    size_t alloc_size = 0;
     size_t capacity = KB(64);
     chunk_seq = (char *)calloc(capacity, sizeof(char));
-    if (NULL == chunk_seq) RETURN_DEFER(0);
+    if (NULL == chunk_seq) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
     char temp_[KB(4)] = {0};
 
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
@@ -195,23 +212,22 @@ extern int fz_serialize_manifest(fz_file_manifest_t *mnfst, char **json, size_t 
         }
 
         /* Todo: use an actual allocator to manage this */
-        alloc_size -= strlen(temp_);
-        if (1 > alloc_size){
+        alloc_size += (strlen(temp_) + 1);
+        if (alloc_size > capacity){
             size_t prev_capacity = capacity;
-            capacity <<= 1;
+            capacity = alloc_size * 2;
             chunk_seq = (char *)realloc(chunk_seq, capacity);
-            if (NULL == chunk_seq) RETURN_DEFER(0);
+            if (NULL == chunk_seq) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
             memset(chunk_seq + prev_capacity, 0, (capacity - prev_capacity));
-            alloc_size = (capacity - prev_capacity);
         }
         strncat(chunk_seq, temp_, strlen(temp_));
         memset(temp_, 0, sizeof(temp_));
     }
 
     // fz_log(FZ_INFO, "JSON: [%s], size: %luKB", chunk_seq, capacity / 1024);
-    *json_size = capacity << 1;
+    *json_size = capacity * 2;
     *json = calloc(*json_size, sizeof(char)); /* replace this with realloc */
-    if (NULL == *json) RETURN_DEFER(0);
+    if (NULL == *json) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
 
     memset(temp_, 0, sizeof(temp_));
     snprintf(
@@ -239,8 +255,6 @@ extern int fz_serialize_manifest(fz_file_manifest_t *mnfst, char **json, size_t 
 
 extern int fz_deserialize_manifest(const char *json, fz_file_manifest_t *mnfst){
     int result = 1;
-    char *buffer = NULL;
-    fz_chunk_seq_t *chunk_seq = NULL;
     char *file_name = NULL;
     struct json_value_s* root = NULL;
     struct json_object_s* file_manifest_json = NULL;
@@ -317,11 +331,8 @@ extern int fz_deserialize_manifest(const char *json, fz_file_manifest_t *mnfst){
     mnfst->chunk_seq.chunk_seq_len = chunk_seq_len;
 
     defer:
-        if (!result && NULL != file_name) free(file_name);
-        if (!result && NULL != chunk_seq) free(chunk_seq);
-        if (NULL != buffer) free(buffer);
+        if (!result && NULL != file_name) {free(file_name); file_name = NULL;}
         if (NULL != root) free(root);
-        if (!result) fz_file_manifest_destroy(mnfst);
         return result;
 }
 

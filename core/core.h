@@ -42,6 +42,7 @@
 #define XSMALL_RESERVED 256
 #define XXSMALL_RESERVED 128
 #define MAX_MANIFEST_SIZE MB(64)
+#define HEX_DIGIT_SIZE 17
 
 #define RETURN_DEFER(val) do{result = val; goto defer;} while(0)
 #define SERIALIZE_CHUNK(buffer, chunk_checksum, cutpoint, chunk_size)\
@@ -130,6 +131,7 @@ typedef struct fz_ctx_attr_t {
 
 enum FZ_CHUNK_STRATEGY {
     FZ_FIXED_SIZED_CHUNK = (0x1 << 0),
+    FZ_GEAR_CDC_CHUNK = (0x1 << 1)
 };
 
 
@@ -270,11 +272,7 @@ extern void* fz_fetch_chunk(void *);
 /* Fetch file from manifest */ 
 extern int fz_fetch_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue);
 extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, char *file_name);
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks);
-
-extern int fz_seed_local_files(fz_ctx_t *ctx, const char *dir);
-extern int fz_seed_local_file(fz_ctx_t *ctx, const char *src_file_path, int db_conn);
-
+extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks, char *dest_file_path);
 
 extern int fz_chunk_init(fz_chunk_seq_t *chnk);
 extern void fz_chunk_destroy(fz_chunk_seq_t *chnk);
@@ -329,7 +327,8 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     fz_chunk_t *chunk_buffer, 
     size_t nchunk, 
     struct cutpoint_map_s **cutpoint_map,
-    struct missing_chunks_map_s **missing_chunks);
+    struct missing_chunks_map_s **missing_chunks,
+    char *dest_file_path);
 
 
 /* Query: find required chunk list */

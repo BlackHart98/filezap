@@ -20,8 +20,8 @@ int main(int argc, char *argv[]){
 #else
     glob_CHUNKING_STRATEGY = FZ_FIXED_SIZED_CHUNK;
 #endif
-    char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
-    // char *input_file = "examples/src/Endless, a film by Frank Ocean.mp4";
+    // char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
+    char *input_file = "examples/src/Endless, a film by Frank Ocean.mp4";
 
     /* Sender and receiver device */
     fz_ctx_t snd_fz = {0}, recv_fz = {0};
@@ -46,17 +46,17 @@ int main(int argc, char *argv[]){
     fz_log(FZ_INFO, "File chunked successfully");
     fz_log(FZ_INFO, "File manifest file: %s", mnfst.file_name);
 
-    chunk_list = calloc(mnfst.chunk_seq.chunk_seq_len, sizeof(fz_chunk_t));
-    if (NULL == chunk_list) RETURN_DEFER(1);
+    // chunk_list = calloc(mnfst.chunk_seq.chunk_seq_len, sizeof(fz_chunk_t));
+    // if (NULL == chunk_list) RETURN_DEFER(1);
     
-    if (!fz_file_manifest_to_chunk_list(&mnfst, chunk_list, input_file)) RETURN_DEFER(1);
-    for (size_t i = 0; i < mnfst.chunk_seq.chunk_seq_len; i++){
-        printf("%llu, %lu, %lu, \"%s\"\n", 
-            chunk_list[i].chunk_checksum, 
-            chunk_list[i].cutpoint,
-            chunk_list[i].chunk_size, 
-            chunk_list[i].src_file_path);
-    }
+    // if (!fz_file_manifest_to_chunk_list(&mnfst, chunk_list, input_file)) RETURN_DEFER(1);
+    // for (size_t i = 0; i < mnfst.chunk_seq.chunk_seq_len; i++){
+    //     printf("%llu, %lu, %lu, \"%s\"\n", 
+    //         chunk_list[i].chunk_checksum, 
+    //         chunk_list[i].cutpoint,
+    //         chunk_list[i].chunk_size, 
+    //         chunk_list[i].src_file_path);
+    // }
 
     /* Clean up */
     defer:

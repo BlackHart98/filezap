@@ -27,6 +27,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     fz_dyn_queue_t dq = {0};
     struct cutpoint_map_s *cutpoint_map = NULL;
     struct missing_chunks_map_s *missing_chunks = NULL;
+    char *temp_file_path = NULL;
 
     hmdefault(missing_chunks, 1);
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
@@ -39,7 +40,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     }
 
     /* Todo: revisit this multithreaded fetch */
-    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, &cutpoint_map, &missing_chunks)){
+    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, &cutpoint_map, &missing_chunks, file_name)){
         fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
         RETURN_DEFER(0);
     }
@@ -51,14 +52,16 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         RETURN_DEFER(0);
     }
 
-    dest_fh = fopen(file_name, "a+");
+    size_t temp_file_path_len = strlen(ctx->target_dir) + strlen("filezap__") + HEX_DIGIT_SIZE;
+    temp_file_path = calloc(temp_file_path_len + 1, sizeof(char));
+    if (NULL == temp_file_path) RETURN_DEFER(0);
+    snprintf(temp_file_path, temp_file_path_len + 1, "%sfilezap__%16llx", ctx->target_dir, mnfst->file_checksum); 
+
+    dest_fh = fopen(temp_file_path, "w+b");
     if (NULL == dest_fh) {
-        fz_log(FZ_INFO, "Destination handle fail");
+        fz_log(FZ_INFO, "Destination handle failed");
         RETURN_DEFER(0);
     }
-
-    // truncate file
-    if (-1 == ftruncate(fileno(dest_fh), 0)) RETURN_DEFER(0);
     char receiver_chnk_loc[RESERVED];
     size_t max_alloc = 0;
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
@@ -72,19 +75,23 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         if (NULL == buffer) RETURN_DEFER(0);
         snprintf(receiver_chnk_loc, RESERVED, "%s%016llx", ctx->metadata_loc, mnfst->chunk_seq.chunk_checksum[i]);
 
-        fh = fopen(receiver_chnk_loc, "r");
+        fh = fopen(receiver_chnk_loc, "rb");
         if (NULL == fh) RETURN_DEFER(0);
         fread(buffer, 1, min, fh);
         fwrite(buffer, 1, min, dest_fh);
         fclose(fh);
-
         memset(buffer, 0, max_alloc * sizeof(char));
     }
 
     fz_hex_digest_t digest = 0;
-    xxhash_hexdigest_from_file(dest_fh, &digest);
+    xxhash_hexdigest_from_file(dest_fh, &digest); /* this guy is reading the destination file `dest_fh` */
     fz_log(FZ_INFO, "Calculating the file checksum");
     if (mnfst->file_checksum != digest) {
+        fz_log(FZ_INFO, "Retrieval error, corrupted file");
+        RETURN_DEFER(0);
+    }
+    if (0 != rename(temp_file_path, file_name)) {
+        fz_log(FZ_ERROR, "Failed to rename file to %s", file_name);
         RETURN_DEFER(0);
     }
 
@@ -102,24 +109,19 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         if (NULL != buffer) free(buffer);
         if (NULL != dest_fh) fclose(dest_fh);
         if (NULL != missing_chunks) hmfree(missing_chunks);
-        if (NULL != cutpoint_map){
-            for (size_t i = 0; i < shlenu(cutpoint_map); i++){
-                fz_cutpoint_list_destroy(cutpoint_map[i].value);
-            }
-            shfree(cutpoint_map);
-        }
+        if (NULL != cutpoint_map){shfree(cutpoint_map);}
+        if (NULL != temp_file_path) free(temp_file_path);
         fz_dyn_queue_destroy(&dq);
         return result;
 }
 
 
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks){
+extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks, char *dest_file_path){
     (void)channel;
     int result = 1;
     char *scratchpad = NULL;
     size_t scratchpad_size = RESERVED;
     fz_chunk_seq_t *chunk_seq = NULL;
-    size_t *missing_index = NULL;
     fz_chunk_t *chunk_list = NULL;
     size_t chunk_size = 0;
 
@@ -127,29 +129,31 @@ extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     if (NULL == scratchpad) RETURN_DEFER(0);
 
     chunk_seq = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(fz_chunk_seq_t));
-    missing_index = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(size_t));
     if (NULL == chunk_seq) RETURN_DEFER(0);
-    if (NULL == missing_index) RETURN_DEFER(0);
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         if (fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad, scratchpad_size)){
             hmput(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 0);
         }
     }
-    if (!fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size, missing_chunks)) RETURN_DEFER(0);
-    if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, cutpoint_map, missing_chunks)) RETURN_DEFER(0);
+    
+    if (fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size, missing_chunks)){
+        if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, cutpoint_map, missing_chunks, dest_file_path)){
+            fz_log(FZ_ERROR, "Error occurred while trying to fetch chunk from file(s)");
+        }
+    } else fz_log(FZ_ERROR, "Error occurred while querying for necessary chunk(s) from chunk table");
+
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         if (0 == hmget(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
         else if (!fetch_chunk_from_source((fz_ctx_desc_t)ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) RETURN_DEFER(0);
     }
     defer:
         if (NULL != scratchpad) free(scratchpad);
-        if (NULL != chunk_seq) free(chunk_seq);
-        if (NULL != missing_index) free(missing_index);
+        if (NULL != chunk_seq) {free(chunk_seq); chunk_seq = NULL;}
         if (NULL != chunk_list) {
             for(size_t i = 0; i < chunk_size; i++){
-                if (NULL != chunk_list[i].src_file_path) free((char *)chunk_list[i].src_file_path);
+                if (NULL != chunk_list[i].src_file_path) {free((char *)chunk_list[i].src_file_path); chunk_list[i].src_file_path = NULL;}
             }
-            free(chunk_list);
+            free(chunk_list); chunk_list = NULL;
         }
         return result;
 }
@@ -270,14 +274,15 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     fz_chunk_t *chunk_buffer, 
     size_t nchunk, 
     struct cutpoint_map_s **cutpoint_map,
-    struct missing_chunks_map_s **missing_chunks
+    struct missing_chunks_map_s **missing_chunks,
+    char *dest_file_path
 ){
     int result = 1;
     char *buffer = NULL;
     char *chunk_loc_buffer = NULL;
     /* This is wasteful, use a resizable arena allocator; create a map from file to the chunk cutpoint */
     for (size_t i = 0; i < nchunk; i++){
-        fz_cutpoint_list_t *val_buffer =(fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
+        fz_cutpoint_list_t *val_buffer = (fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
         if (NULL == val_buffer) {
             val_buffer = calloc(1, sizeof(fz_cutpoint_list_t));
             if (NULL == val_buffer) RETURN_DEFER(0);
@@ -291,19 +296,21 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 free(val_buffer); RETURN_DEFER(0);
             }
         }
+        if (val_buffer->cutpoint_len >= mnfst->chunk_seq.chunk_seq_len) continue;
         val_buffer->buffer[val_buffer->cutpoint_len] = chunk_buffer[i].chunk_checksum;
         val_buffer->chunk_size[val_buffer->cutpoint_len] = chunk_buffer[i].chunk_size;
         val_buffer->cutpoint[val_buffer->cutpoint_len] = chunk_buffer[i].cutpoint;
-        hmput(*missing_chunks, chunk_buffer[i].chunk_checksum, 0);
+        hmput(*missing_chunks, chunk_buffer[i].chunk_checksum, 1);
         val_buffer->cutpoint_len++;
+
         shput(*cutpoint_map, chunk_buffer[i].src_file_path, val_buffer);
     }
 
     size_t max_alloc = 0;
     fz_hex_digest_t digest = 0;
-    char temp[17] = {0};
+    char temp[HEX_DIGIT_SIZE] = {0};
 
-    chunk_loc_buffer = (char *)calloc(strlen(ctx->metadata_loc) + 17, sizeof(char));
+    chunk_loc_buffer = (char *)calloc(strlen(ctx->metadata_loc) + HEX_DIGIT_SIZE, sizeof(char));
     if (NULL == chunk_loc_buffer) RETURN_DEFER(0);
     strncat(chunk_loc_buffer, ctx->metadata_loc, sizeof(ctx->metadata_loc));
 
@@ -312,7 +319,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
         fz_cutpoint_list_t *val_buffer = (*cutpoint_map)[i].value;
         // fz_log(FZ_INFO, "Open file `%s`", scvg_file_path);
         FILE *fh = fopen(scvg_file_path, "rb");
-        if (NULL == fh) RETURN_DEFER(0);
+        if (NULL == fh) continue; /* If it fails to open the file move to next file */
         for (size_t j = 0; j < val_buffer->cutpoint_len; j++){
             if (fseek(fh, val_buffer->cutpoint[j], SEEK_SET) < 0) RETURN_DEFER(0);
             if (max_alloc < val_buffer->chunk_size[j]){
@@ -325,10 +332,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
             fread(buffer, 1, val_buffer->chunk_size[j], fh);
             size_t min = val_buffer->chunk_size[j];
             xxhash_hexdigest(buffer, val_buffer->chunk_size[j], &digest);
-            if (digest != val_buffer->buffer[j]){
-                hmput(*missing_chunks, digest, 1);
-                fclose(fh); RETURN_DEFER(0);
-            } else {
+            if (digest == val_buffer->buffer[j]){
                 snprintf(temp, 17, "%016llx", digest);
                 memcpy(&chunk_loc_buffer[strlen(ctx->metadata_loc)], temp, 17);
                 // fz_log(FZ_INFO, "Chunk location: %s", chunk_loc_buffer);
@@ -336,10 +340,11 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 if (NULL == d_fh) RETURN_DEFER(0);
                 fwrite(buffer, 1, min, d_fh);
                 fclose(d_fh);
+                hmput(*missing_chunks, digest, 0);
             }
         }
         // fz_log(FZ_INFO, "Close file `%s`", scvg_file_path);
-        snprintf(temp, 17, "%016llx", digest);
+        snprintf(temp, HEX_DIGIT_SIZE, "%016llx", digest);
         fclose(fh);
     }
     defer:

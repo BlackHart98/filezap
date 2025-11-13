@@ -4,7 +4,7 @@
 #include "core.h"
 
 #define DEFAULT_METADATA_LOC "tmp/"
-#define SUPPORTED_STRATEGIES (FZ_FIXED_SIZED_CHUNK)
+#define SUPPORTED_STRATEGIES (FZ_FIXED_SIZED_CHUNK | FZ_GEAR_CDC_CHUNK)
 #define SUPPORTED_HASHING (FZ_HASH_SHA256 | FZ_HASH_XXHASH)
 #define FIXED_SIZED_DEFAULT KB(64)
 #define IN_MEMORY_BUFFER_DEFAULT MB(1)
@@ -62,11 +62,14 @@ extern int fz_ctx_init(
             assert((0 > ctx_attrs->chunk_size)&&"");
             ctx->ctx_attrs = (fz_ctx_attr_t){.chunk_size = ctx_attrs->chunk_size,};
         } else {
-            assert(0&&"Todo!");
+            assert(0&&"Todo! chunk strategy not yet supported");
         }
     }
     ret = sqlite3_open(db_file, &(ctx->db));
-    if (ret) RETURN_DEFER(0);
+    if (ret) {
+        fz_log(FZ_ERROR, "Unable to create filezap database");
+        RETURN_DEFER(0);
+    }
     defer:
         return result;
 }
@@ -80,8 +83,8 @@ extern void fz_ctx_destroy(fz_ctx_t *ctx){
 
 extern int fz_chunk_init(fz_chunk_seq_t *chnk){
     chnk->chunk_checksum = NULL;
-    chnk->chunk_size = 0;
-    chnk->cutpoint = 0;
+    chnk->chunk_size = NULL;
+    chnk->cutpoint = NULL;
     return 1;
 }
 
@@ -270,11 +273,6 @@ extern void fz_log(int level, const char *fmt, ...){
 }
 
 
-extern int fz_commit_chunk_meta(fz_file_manifest_t *file_mnfst, int db_conn){
-    return 0;
-}
-
-
 extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
     int result = 1;
     char *buffer = NULL;
@@ -300,6 +298,7 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
             c_ptr->request_d = open(c_ptr->request, O_RDONLY);
             c_ptr->response_d = open(c_ptr->response, O_WRONLY);
         } else {
+            fz_log(FZ_ERROR, "Failed to create FIFO connection channel");
             RETURN_DEFER(0);
         }
         if (-1 == c_ptr->request_d || -1 == c_ptr->response_d){
@@ -314,6 +313,7 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
     } else if (FZ_TCP_SOCKET & channel_desc){
         assert(0&&"Todo: Not yet implemented the TCP socket channel");
     } else {
+        fz_log(FZ_ERROR, "Unsupported channel, ensure channel passed is supported");
         RETURN_DEFER(0);
     }
     defer:
