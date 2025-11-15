@@ -32,7 +32,7 @@ int main(int argc, char *argv[]){
 
     size_t total_chunk_size = calculate_chunk_size(&mnfst);
     fz_log(FZ_INFO, "The total sum of the chunk of the file is %lu", total_chunk_size);
-    fz_log(FZ_INFO, "Th actual file size: %lu", mnfst.file_size);
+    fz_log(FZ_INFO, "The actual file size: %lu", mnfst.file_size);
     
     ssize_t diff_size = (ssize_t)(mnfst.file_size - total_chunk_size);
     

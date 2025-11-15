@@ -9,3 +9,8 @@ cc nob.c -o nob
 ```sh
 ./nob
 ```
+
+
+# Resources
+- **LBFS** - https://pdos.csail.mit.edu/papers/lbfs%3Asosp01/lbfs.pdf
+

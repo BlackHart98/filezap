@@ -11,6 +11,7 @@
 
 
 static inline int fz_chunking_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, FILE *input_fd, size_t file_size, const char* src_file_path);
+static inline int fz_chunking_variable_size(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, FILE *input_fd, size_t file_size, const char* src_file_path);
 
 
 extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const char* src_file_path){
@@ -39,7 +40,7 @@ extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const ch
 
     if (FZ_FIXED_SIZED_CHUNK & ctx->chunk_strategy){
         if (!fz_chunking_fixed_size(ctx, file_mnfst, fd, file_size, src_file_path)){
-            fz_log(FZ_ERROR, "Chunking failed");
+            fz_log(FZ_ERROR, "Fixed sized chunking failed");
             RETURN_DEFER(0);
         }
     } else {
