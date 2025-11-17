@@ -114,10 +114,9 @@ typedef struct fz_chunk_seq_t{
 typedef struct fz_file_manifest_t {
     char *file_name;
     fz_hex_digest_t file_checksum;
-
     fz_chunk_seq_t chunk_seq;
-
     size_t file_size;
+
     fz_ctx_desc_t source_id;
 } fz_file_manifest_t;
 
@@ -226,7 +225,7 @@ struct fz_fifo_channel_s{
 
 
 typedef struct fz_ctx_t{
-    fz_ctx_desc_t ctx_id;
+    // fz_ctx_desc_t ctx_id;
     int chunk_strategy;
     int hash_algorithm;
 
@@ -254,7 +253,7 @@ struct cutpoint_map_s {char *key; fz_cutpoint_list_t *value;};
 struct missing_chunks_map_s {fz_hex_digest_t key; int8_t value;};
 
 
-extern int fz_ctx_init(fz_ctx_t *ctx, uintptr_t ctx_id, int chunk_strategy, const char *metadata_loc, const char *target_dir, const char *db_file, int *max_threads, fz_ctx_attr_t *ctx_attrs);
+extern int fz_ctx_init(fz_ctx_t *ctx, int chunk_strategy, const char *metadata_loc, const char *target_dir, const char *db_file, int *max_threads, fz_ctx_attr_t *ctx_attrs);
 extern void fz_ctx_destroy(fz_ctx_t *ctx);
 extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const char* src_file_path);
 extern int fz_commit_chunk_meta(fz_file_manifest_t *file_mnfst, int db_conn);
@@ -282,7 +281,7 @@ extern int fz_file_manifest_init(fz_file_manifest_t *mnfst);
 extern void fz_file_manifest_destroy(fz_file_manifest_t *mnfst);
 
 extern int fz_file_prefetch(void);
-extern int fz_file_manifest_to_chunk_list(fz_file_manifest_t *mnfst, fz_chunk_t *chunk_list, char *dest_file_path);
+extern int fz_file_manifest_to_chunk_list(fz_file_manifest_t *mnfst, fz_chunk_t *chunk_list);
 extern int fz_derive_receive_file_manifest(fz_ctx_t *ctx, fz_file_manifest_t *sndr_mnfst, fz_file_manifest_t *recv_mnfst);
 
 
@@ -334,7 +333,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
 /* Query: find required chunk list */
 extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s **missing_chunks);
 
-
+/* Query: commit chunk metadata */
 extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, char *dest_file_path);
 
 

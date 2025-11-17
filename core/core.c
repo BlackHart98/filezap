@@ -26,7 +26,6 @@ int fz_minimal_log_level = FZ_INFO;
 
 extern int fz_ctx_init(
     fz_ctx_t *ctx,
-    uintptr_t ctx_id,
     int chunk_strategy, 
     const char *metadata_loc, 
     const char *target_dir,
@@ -38,7 +37,6 @@ extern int fz_ctx_init(
     int result = 1;
     int _max_threads = 0;
     int ret = 0;
-    ctx->ctx_id = ctx_id;
     if (!(chunk_strategy & SUPPORTED_STRATEGIES)) return 0;
     if (NULL == target_dir) return 0;
     ctx->target_dir = target_dir;

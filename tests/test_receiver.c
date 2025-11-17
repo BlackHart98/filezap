@@ -22,7 +22,7 @@ int main(int argc, char *argv[]){
     int result = 0;
     fz_channel_t recv_channel = {0};
 
-    if (!fz_ctx_init(&recv_fz, (fz_ctx_desc_t)&recv_fz, glob_CHUNKING_STRATEGY, "dtmp/", "examples/dest/", "filezap.db", NULL, NULL)){
+    if (!fz_ctx_init(&recv_fz, glob_CHUNKING_STRATEGY, "dtmp/", "examples/dest/", "filezap.db", NULL, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap reciever context", __func__);
         RETURN_DEFER(1);
     }

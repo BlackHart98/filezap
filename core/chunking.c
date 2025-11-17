@@ -32,20 +32,23 @@ extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const ch
         fz_log(FZ_ERROR, "Issue encountered while reading file `%s`", src_file_path);
         RETURN_DEFER(0);
     }
-
     if (0 == file_size){
         fz_log(FZ_ERROR, "Cannot chunk empty file `%s`", src_file_path);
         RETURN_DEFER(0);
     }
-
-    if (FZ_FIXED_SIZED_CHUNK & ctx->chunk_strategy){
-        if (!fz_chunking_fixed_size(ctx, file_mnfst, fd, file_size, src_file_path)){
-            fz_log(FZ_ERROR, "Fixed sized chunking failed");
+    switch (ctx->chunk_strategy) {
+        case FZ_FIXED_SIZED_CHUNK:
+            if (!fz_chunking_fixed_size(ctx, file_mnfst, fd, file_size, src_file_path)){
+                fz_log(FZ_ERROR, "Fixed sized chunking failed"); RETURN_DEFER(0);
+            }
+            break;
+        case FZ_GEAR_CDC_CHUNK:
+            assert(0&&"Todo: Gear CDC chunk not yet implemented!");
+            break;
+        default:
+            fz_log(FZ_ERROR, "Invalid chunking strategy");
             RETURN_DEFER(0);
-        }
-    } else {
-        fz_log(FZ_ERROR, "Invalid chunking strategy");
-        RETURN_DEFER(0);
+            break;
     }
     fz_log(FZ_INFO, "File checksum: %016llx", file_mnfst->file_checksum);
     if (0 == file_mnfst->chunk_seq.chunk_seq_len) {
@@ -60,7 +63,7 @@ extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const ch
 }
 
 
-extern inline int fz_file_manifest_to_chunk_list(fz_file_manifest_t *mnfst, fz_chunk_t *chunk_list, char *dest_file_path){
+extern inline int fz_file_manifest_to_chunk_list(fz_file_manifest_t *mnfst, fz_chunk_t *chunk_list){
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         chunk_list[i].chunk_checksum = mnfst->chunk_seq.chunk_checksum[i];
         chunk_list[i].chunk_size = mnfst->chunk_seq.chunk_size[i];
@@ -113,7 +116,6 @@ static inline int fz_chunking_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file
     }
 
     file_mnfst->file_checksum = digest;
-    file_mnfst->source_id = ctx->ctx_id;
     file_mnfst->chunk_seq.chunk_seq_len = chunk_seq_len;
 
     file_name = calloc(strlen(src_file_path) + 1, sizeof(char));

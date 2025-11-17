@@ -6,8 +6,8 @@
 #include "core.h"
 
 
-static inline int fetch_chunk_from_file_cutpoint(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum);
-static inline int fetch_chunk_from_source(fz_ctx_desc_t ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue);
+// static inline int fetch_chunk_from_file_cutpoint(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum);
+static inline int fetch_chunk_from_source(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue);
 static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, char *scratchpad, size_t scratchpad_size); /* LRU cache for the chunks */
 static inline int get_filename(const char *file_path, char **file_name);
 static inline int download_chunks(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel);
@@ -144,7 +144,7 @@ extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
 
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         if (0 == hmget(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
-        else if (!fetch_chunk_from_source((fz_ctx_desc_t)ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) RETURN_DEFER(0);
+        else if (!fetch_chunk_from_source(ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) RETURN_DEFER(0);
     }
     defer:
         if (NULL != scratchpad) free(scratchpad);
@@ -243,7 +243,7 @@ extern void* fz_fetch_chunk(void *arg){
         if (0 < failed_tasks || 0 >= remaining_tasks) return NULL;
         if (fz_dequeue(t_cntl, &val)){
             if(!fetch_chunk_from_source(
-                (fz_ctx_desc_t)val.dest_id, 
+                (fz_ctx_t *)val.dest_id, 
                 val.chunk_meta.chunk_checksum, 
                 val.chunk_meta.chunk_index, 
                 t_arg.download_queue)
@@ -355,9 +355,8 @@ extern int fz_fetch_chunks_from_file_cutpoint(
 
 
 /* For now this function is a stub that just copies chunks to the target directory */ 
-static inline int fetch_chunk_from_source(fz_ctx_desc_t ctx_id, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue){
+static inline int fetch_chunk_from_source(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue){
     int result = 1;
-    fz_ctx_t *ctx = (fz_ctx_t *)ctx_id;
     (void)ctx;
 
     /* Begin: This whole section is atomic */
@@ -371,13 +370,6 @@ static inline int fetch_chunk_from_source(fz_ctx_desc_t ctx_id, fz_hex_digest_t 
 
     defer:
         return result;
-}
-
-
-static inline int fetch_chunk_from_file_cutpoint(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum){
-    (void)ctx;
-    (void)chnk_checksum;
-    return 0;
 }
 
 

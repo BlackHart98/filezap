@@ -19,7 +19,7 @@ int main(int argc, char *argv[]){
 
     char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
 
-    if (!fz_ctx_init(&my_ctx, (fz_ctx_desc_t)&my_ctx, FZ_FIXED_SIZED_CHUNK, "tmp/", "examples/src/", "filezap.db", NULL, NULL)){
+    if (!fz_ctx_init(&my_ctx, FZ_FIXED_SIZED_CHUNK, "tmp/", "examples/src/", "filezap.db", NULL, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender context", __func__);
         RETURN_DEFER(1);
     }
