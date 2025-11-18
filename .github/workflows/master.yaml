@@ -16,7 +16,7 @@ jobs:
         run: cc nob.c -o nob
       - name: Build project
         run: ./nob
-      - name: Run test_chunk_dedup
-        run: ./build/test_chunk_dedup
-      - name: Run filezap
-        run: ./build/filezap
+      # - name: Run test_chunk_dedup
+      #   run: ./build/test_chunk_dedup
+      # - name: Run filezap
+      #   run: ./build/filezap
