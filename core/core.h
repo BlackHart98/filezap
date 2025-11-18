@@ -123,6 +123,11 @@ typedef struct fz_file_manifest_t {
 
 typedef struct fz_ctx_attr_t {
     size_t chunk_size;
+
+    size_t min_chunk_size;
+    size_t avg_chunk_size;
+    size_t max_chunk_size;
+    
     size_t prefetch_size;
     size_t in_mem_buffer;
 } fz_ctx_attr_t;

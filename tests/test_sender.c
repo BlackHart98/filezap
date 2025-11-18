@@ -5,16 +5,11 @@
 #define STB_DS_IMPLEMENTATION
 #include "core.h"
 
-/* global settings */
-int glob_CHUNKING_STRATEGY;
-
 
 
 int main(int argc, char *argv[]){
     (void)argc;
     (void)argv;
-
-    glob_CHUNKING_STRATEGY = FZ_FIXED_SIZED_CHUNK;
     // const char *input_file = "examples/src/Endless, a film by Frank Ocean.mp4";
     // const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
     const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra).mp4";
@@ -24,7 +19,7 @@ int main(int argc, char *argv[]){
     fz_channel_t snd_channel = {0};
     int result = 0;
 
-    if (!fz_ctx_init(&snd_fz, glob_CHUNKING_STRATEGY, "tmp/", "examples/src/", "filezap.db", NULL, NULL)){
+    if (!fz_ctx_init(&snd_fz, FZ_FIXED_SIZED_CHUNK, "tmp/", "examples/src/", "filezap.db", NULL, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender context", __func__);
         RETURN_DEFER(1);
     }

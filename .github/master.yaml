@@ -1,0 +1,22 @@
+name: Master - Run filezap tests
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build recipe
+        run: cc nob.c -o nob
+      - name: Build project
+        run: ./nob
+      - name: Run test_chunk_dedup
+        run: ./build/test_chunk_dedup
+      - name: Run filezap
+        run: ./build/filezap

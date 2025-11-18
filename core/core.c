@@ -41,21 +41,16 @@ extern int fz_ctx_init(
     if (NULL == target_dir) return 0;
     ctx->target_dir = target_dir;
     ctx->chunk_strategy = chunk_strategy;
-    if (NULL != metadata_loc){
-        ctx->metadata_loc = metadata_loc;
-    } else {
-        ctx->metadata_loc = DEFAULT_METADATA_LOC;
-    }
-    if (NULL == max_threads || 0 <= *max_threads){
-        _max_threads = MAX_THREADS;
-    } else {
-        _max_threads = *max_threads;
-    }
+
+    if (NULL != metadata_loc) ctx->metadata_loc = metadata_loc;
+    else ctx->metadata_loc = DEFAULT_METADATA_LOC;
+    if (NULL == max_threads || 0 <= *max_threads) _max_threads = MAX_THREADS;
+    else _max_threads = *max_threads;
+
     fz_ring_buffer_init(&(ctx->wq));
     ctx->max_threads = _max_threads;
-    if (NULL == ctx_attrs){
-        SET_CHUNK_PARAM_DEFAULTS(ctx, chunk_strategy);
-    } else {
+    if (NULL == ctx_attrs) SET_CHUNK_PARAM_DEFAULTS(ctx, chunk_strategy);
+    else {
         if (FZ_FIXED_SIZED_CHUNK & chunk_strategy){
             assert((0 > ctx_attrs->chunk_size)&&"");
             ctx->ctx_attrs = (fz_ctx_attr_t){.chunk_size = ctx_attrs->chunk_size,};
@@ -261,6 +256,7 @@ extern void fz_log(int level, const char *fmt, ...){
             break;
         default:
             assert(0&&"Unreachable!");
+            break;
     }
 
     va_list args;
@@ -315,9 +311,7 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
         RETURN_DEFER(0);
     }
     defer:
-        if (!result && NULL != buffer){
-            free(buffer); buffer = NULL;
-        }
+        if (!result && NULL != buffer){free(buffer); buffer = NULL;}
         return result;
 }
 

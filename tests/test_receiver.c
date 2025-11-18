@@ -6,23 +6,16 @@
 #define STB_DS_IMPLEMENTATION
 #include "core.h"
 
-/* global settings */
-int glob_CHUNKING_STRATEGY;
-
-
 
 int main(int argc, char *argv[]){
     (void)argc;
     (void)argv;
-
-    glob_CHUNKING_STRATEGY = FZ_FIXED_SIZED_CHUNK;
-
     /* Receiver device */
     fz_ctx_t recv_fz = {0};
     int result = 0;
     fz_channel_t recv_channel = {0};
 
-    if (!fz_ctx_init(&recv_fz, glob_CHUNKING_STRATEGY, "dtmp/", "examples/dest/", "filezap.db", NULL, NULL)){
+    if (!fz_ctx_init(&recv_fz, FZ_FIXED_SIZED_CHUNK, "dtmp/", "examples/dest/", "filezap.db", NULL, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap reciever context", __func__);
         RETURN_DEFER(1);
     }

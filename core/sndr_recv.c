@@ -9,13 +9,18 @@ static inline int get_filename(const char *file_path, char **file_name);
 extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path){
     int result = 1;
     fz_file_manifest_t mnfst = {0};
+
+    /* JSON serialized result */
     char *buffer = NULL;
+
     char *response_buffer = NULL;
-    char *content_buffer = NULL;
+    char *scratchpad = NULL;
     size_t scratchpad_size = LARGE_RESERVED;
+    char *content_buffer = NULL;
+    size_t alloc_size = XSMALL_RESERVED;
     FILE *src_fh = NULL;
 
-    char *scratchpad = calloc(scratchpad_size, sizeof(char));
+    scratchpad = calloc(scratchpad_size, sizeof(char));
     if (NULL == scratchpad) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
@@ -50,7 +55,6 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
     
     /* Waiting for response from the reciever, todo: remove unnecessary memset */
     size_t flag = 0;
-    size_t alloc_size = XSMALL_RESERVED;
     size_t chunk_max_alloc = 0;
     response_buffer = calloc(alloc_size, sizeof(char));
     if (NULL == response_buffer) {
@@ -133,14 +137,18 @@ Spawn a process for recieiving the file
 extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){    
     int result = 1;
     fz_file_manifest_t mnfst = {0};
+
+    /* JSON serialized result */
     char *buffer = NULL;
+    
     char *file_name = NULL;
     char *file_path_buffer = NULL;
     char number_as_str[XXSMALL_RESERVED] = {0};
+    char *scratchpad = NULL;
     size_t scratchpad_size = LARGE_RESERVED;
     size_t flag = 0;
 
-    char *scratchpad = calloc(scratchpad_size, sizeof(char));
+    scratchpad = calloc(scratchpad_size, sizeof(char));
     if (NULL == scratchpad) RETURN_DEFER(0);
 
     if (!fz_channel_read_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)) RETURN_DEFER(0);

@@ -9,16 +9,15 @@
 // static inline int fetch_chunk_from_file_cutpoint(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum);
 static inline int fetch_chunk_from_source(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue);
 static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, char *scratchpad, size_t scratchpad_size); /* LRU cache for the chunks */
-static inline int get_filename(const char *file_path, char **file_name);
-static inline int download_chunks(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel);
-static void* download_chunks_(void *arg);
+// static inline int get_filename(const char *file_path, char **file_name);
+// static inline int download_chunks(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel);
+// static void* download_chunks_(void *arg);
 
 /* Single threaded download */
 static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst);
 
 
-/* The file retrieval step is a all-or-nothing step i.e. for all the file to be successfully retrieved 
-all the chunks that make up the file must exist */ 
+/* The file retrieval step is a all-or-nothing step i.e., for all the file to be successfully retrieved all the chunks that make up the file must exist */ 
 extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, char *file_name){
     int result = 1;
     FILE *fh = NULL;
@@ -159,115 +158,6 @@ extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
 }
 
 
-extern int fz_fetch_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue){
-    pthread_mutex_t t_mtx;
-    pthread_cond_t is_done;
-    int failed = 0;
-    size_t failed_tasks = 0;
-    ssize_t remaining_tasks = mnfst->chunk_seq.chunk_seq_len;
-    int result = 1;
-    pthread_t *workers = NULL;
-    char *scratchpad = NULL;
-
-    pthread_mutex_init(&t_mtx, NULL);
-    pthread_cond_init(&is_done, NULL);
-    workers = malloc(sizeof(pthread_t) * ctx->max_threads);
-    if(NULL == workers) RETURN_DEFER(0);
-    scratchpad = calloc(RESERVED, sizeof(char));
-    if(NULL == scratchpad) RETURN_DEFER(0);
-    for (size_t i = 0; i < ctx->max_threads; i++){
-        struct thread_arg t_arg = {
-            .wq = &(ctx->wq), 
-            .done_cv = &is_done, 
-            .mtx = &t_mtx, 
-            .failed_tasks = &failed_tasks, 
-            .remaining_tasks = &remaining_tasks,
-            .download_queue = download_queue};
-        pthread_create(&workers[i], NULL, fz_fetch_chunk, (void *)&t_arg);
-    }
-    // fz_log(FZ_INFO, "Chunk count: %lu", mnfst->chunk_seq.chunk_seq_len);
-    for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        if (!fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad, RESERVED)){
-            // fz_log(FZ_ERROR, "Cannot find chunk `%016llx` in blob store", mnfst->chunk_seq.chunk_checksum[i]);
-            // fz_log(FZ_INFO, "Scavenging for the chunk with the checksum `%016llx`", mnfst->chunk_seq.chunk_checksum[i]);
-            pthread_mutex_lock(&t_mtx);
-            if (0 < failed_tasks) failed = 1;
-            pthread_mutex_unlock(&t_mtx);
-            if (failed) {
-                fz_log(FZ_ERROR, "Error occurred while scavenging for chunks"); break;
-            }
-            fz_enqueue(&(ctx->wq), (fz_chunk_request_t){
-                .dest_id = (uintptr_t)ctx,
-                .chunk_meta = (fz_chunk_t){
-                    .chunk_checksum = mnfst->chunk_seq.chunk_checksum[i],
-                    .chunk_size = mnfst->chunk_seq.chunk_size[i],
-                    .cutpoint = mnfst->chunk_seq.cutpoint[i],
-                    .chunk_index = i,
-                }});            
-        } else {
-            pthread_mutex_lock(&t_mtx);
-            remaining_tasks -= 1;
-            pthread_mutex_unlock(&t_mtx);
-        }
-    }
-    pthread_mutex_lock(&t_mtx);
-    while(0 < remaining_tasks && 0 >= failed_tasks){
-        pthread_cond_wait(&is_done, &t_mtx);
-    }
-    pthread_mutex_unlock(&t_mtx);
-
-    for (size_t i = 0; i < ctx->max_threads; i++){
-        pthread_join(workers[i], NULL);
-    }
-
-    if (0 < failed_tasks) RETURN_DEFER(0);
-    defer:
-        pthread_mutex_destroy(&t_mtx);
-        pthread_cond_destroy(&is_done);
-        if (NULL != workers) free(workers);
-        if (NULL != scratchpad) free(scratchpad);
-        return result;
-}
-
-
-extern void* fz_fetch_chunk(void *arg){
-    struct thread_arg t_arg = *(struct thread_arg *) arg;
-    fz_ringbuffer_t *t_cntl = (fz_ringbuffer_t *)t_arg.wq;
-    while(1){
-        fz_chunk_request_t val;
-        pthread_mutex_lock(t_arg.mtx);
-        size_t failed_tasks = *(t_arg.failed_tasks);
-        ssize_t remaining_tasks = *(t_arg.remaining_tasks);
-        pthread_mutex_unlock(t_arg.mtx);
-        /* If any threads fails all other threads should fail */
-        if (0 < failed_tasks || 0 >= remaining_tasks) return NULL;
-        if (fz_dequeue(t_cntl, &val)){
-            if(!fetch_chunk_from_source(
-                (fz_ctx_t *)val.dest_id, 
-                val.chunk_meta.chunk_checksum, 
-                val.chunk_meta.chunk_index, 
-                t_arg.download_queue)
-            ){
-                // fz_log(FZ_ERROR, "Could not download chunk `%016llx` from source", val.chunk_meta.chunk_checksum);
-                /* Potentially try again... */
-                pthread_mutex_lock(t_arg.mtx);
-                *(t_arg.failed_tasks) += 1;
-                pthread_cond_signal(t_arg.done_cv);
-                pthread_mutex_unlock(t_arg.mtx);
-            } else {
-                /* Signal to the caller thread that this task has been completed */ 
-                pthread_mutex_lock(t_arg.mtx);
-                *(t_arg.remaining_tasks) -= 1;
-                pthread_cond_signal(t_arg.done_cv);
-                pthread_mutex_unlock(t_arg.mtx);
-                // fz_log(FZ_INFO, "Finished download for `%016llx`", val.chunk_meta.chunk_checksum);
-            }
-        }
-    }
-    return NULL;
-}
-
-
 extern int fz_fetch_chunks_from_file_cutpoint(
     fz_ctx_t *ctx, 
     fz_file_manifest_t *mnfst, 
@@ -399,29 +289,6 @@ static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chn
 }
 
 
-/* Potential buffer overflow */
-static int get_filename(const char *file_path, char **file_name){
-    int result = 1;
-    size_t file_path_len = strlen(file_path);
-    int count = 0;
-    for (int i = file_path_len; i >= 0; i--){
-        if ('/' == file_path[i]) {
-            break;
-        } else {
-            count += 1;
-        }
-    }
-
-    char *buffer = calloc((size_t)count, sizeof(char));
-    if (NULL == buffer) RETURN_DEFER(0);
-    memcpy(buffer, (char *)(file_path + (uintptr_t)(file_path_len - count + 1)), count);
-    *file_name = buffer;
-    defer:
-        if (!result && NULL != buffer) free(buffer);
-        return result;
-}
-
-
 extern int fz_serialize_response(fz_chunk_response_t *response, char **json, size_t *json_size){
     int result = 1;
     char *buffer = NULL;
@@ -463,64 +330,6 @@ extern int fz_deserialize_response(char *json, fz_chunk_response_t *response){
     defer:
         if (!root) free(root);
         return result;
-}
-
-
-static inline int download_chunks(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel){
-    int result = 1;
-    int failed = 0;
-    pthread_mutex_t mtx;
-    pthread_cond_t done_cv;
-    pthread_mutex_init(&mtx, NULL);
-    pthread_cond_init(&done_cv, NULL);
-    pthread_t *workers = calloc(ctx->max_threads, sizeof(pthread_t));
-    if (NULL == workers) RETURN_DEFER(0);
-    for (size_t i = 0; i < ctx->max_threads; i++){
-        pthread_create(
-            &workers[i], 
-            NULL, 
-            download_chunks_, 
-            (void *)&(struct download_thread_arg){
-                .failed = &failed,
-                .channel = NULL,
-                .done_cv = &done_cv,
-                .download_queue = download_queue,
-                .mtx = &mtx});
-    }
-    for (size_t i = 0; i < ctx->max_threads; i++){
-        pthread_join(workers[i], NULL);
-    }
-    if (failed) RETURN_DEFER(0);
-    defer:
-        if (NULL != workers) free(workers);
-        pthread_cond_destroy(&done_cv);
-        pthread_mutex_destroy(&mtx);
-        return result;
-}
-
-
-static void* download_chunks_(void *arg){
-    struct download_thread_arg *t_arg = (struct download_thread_arg *)arg;
-    fz_dyn_queue_t *dq = (fz_dyn_queue_t *)t_arg->download_queue;
-    while(1){
-        pthread_mutex_lock(t_arg->mtx);
-        int failed = *(t_arg->failed);
-        pthread_mutex_unlock(t_arg->mtx);
-        fz_chunk_response_t val = {0};
-        if (fz_dyn_queue_empty(dq) || failed){
-            break;
-        } else {
-            if (fz_dyn_dequeue(dq, &val)){
-                fz_log(FZ_INFO, "Downloading the chunk...");
-
-                fz_log(FZ_ERROR, "Could not download chunk...");
-                pthread_mutex_lock(t_arg->mtx);
-                *(t_arg->failed) = 1;
-                pthread_mutex_unlock(t_arg->mtx);
-            }
-        }
-    }
-    return NULL;
 }
 
 

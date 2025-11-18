@@ -26,9 +26,8 @@ extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const ch
         RETURN_DEFER(0);
     }
 
-    if (0 == stat(src_file_path, &file_meta)){
-        file_size = file_meta.st_size;
-    } else {
+    if (0 == stat(src_file_path, &file_meta)) file_size = file_meta.st_size;
+    else {
         fz_log(FZ_ERROR, "Issue encountered while reading file `%s`", src_file_path);
         RETURN_DEFER(0);
     }
