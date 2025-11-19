@@ -49,6 +49,7 @@ int main(int argc, char *argv[]){
         {.src_file = TEST_PATH"test_receiver.c", .target_file = BUILD_PATH"test_receiver"},
         // {.src_file = TEST_PATH"test_xxhash.c", .target_file = BUILD_PATH"test_xxhash"},
         {.src_file = TEST_PATH"test_chunk_dedup.c", .target_file = BUILD_PATH"test_chunk_dedup"},
+        {.src_file = TEST_PATH"test_sender_receiver.c", .target_file = BUILD_PATH"test_sender_receiver"},
     };
     for (int i = 0; i < NOB_ARRAY_LEN(tests); i++){
         nob_cc(&cmd);
