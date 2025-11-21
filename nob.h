@@ -629,7 +629,7 @@ NOBDEF bool nob_set_current_dir(const char *path);
 
 
 #ifndef nob_cc_add_define
-#   if defined(_MSC_VER) && !defined(__clang__)
+#   if defined(_MSC_VER)
 #      define nob_cc_add_define(cmd, define_macro) nob_cmd_append(cmd, nob_temp_sprintf("/D%s", define_macro))
 #   else
 #      define nob_cc_add_define(cmd, define_macro) nob_cmd_append(cmd, nob_temp_sprintf("-D%s", define_macro))
@@ -643,14 +643,6 @@ NOBDEF bool nob_set_current_dir(const char *path);
 #   endif // nob_cc_add_framework
 #endif
 
-
-// #ifndef nob_cc_add_includes
-// #   if !defined(_MSC_VER) && !defined(__clang__)
-// #       define nob_cc_add_include(cmd, include_dir) nob_cmd_append(cmd, nob_temp_sprintf("/I%s", include_dir))
-// #   else
-// #      define nob_cc_add_include(cmd, include_dir) nob_cmd_append(cmd, nob_temp_sprintf("-I%s", include_dir))
-// #   endif
-// #endif // nob_cc_add_includes
 
 #ifndef nob_cc_add_includes
 #   if defined(_MSC_VER)

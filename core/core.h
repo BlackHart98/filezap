@@ -127,7 +127,7 @@ typedef struct fz_ctx_attr_t {
     size_t min_chunk_size;
     size_t avg_chunk_size;
     size_t max_chunk_size;
-    
+
     size_t prefetch_size;
     size_t in_mem_buffer;
 } fz_ctx_attr_t;
@@ -334,12 +334,19 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     struct missing_chunks_map_s **missing_chunks,
     char *dest_file_path);
 
+extern int fz_janitor_clean_up(fz_ctx_t *ctx);
 
 /* Query: find required chunk list */
 extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s **missing_chunks);
 
 /* Query: commit chunk metadata */
 extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, char *dest_file_path);
+
+/* Query: fetch unused chunks */
+extern int fz_query_unused_chunk(fz_ctx_t *ctx, fz_hex_digest_t **unused_chunk_list, size_t *nchunk);
+
+/* Query: commit janitor change */
+extern int fz_commit_janitor_change(fz_ctx_t *ctx, fz_hex_digest_t *unused_chunk_list, size_t nchunk);
 
 
 extern void fz_log(int level, const char *fmt, ...) FZ_PRINTF_FORMAT(2, 3);

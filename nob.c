@@ -15,6 +15,8 @@ int main(int argc, char *argv[]){
     nob_mkdir_if_not_exists(BUILD_PATH);
 
     Nob_Cmd cmd = {0};
+    Nob_Procs procs = {0};
+
     struct{
         const char *src_file;
         const char *target_file;
@@ -24,6 +26,7 @@ int main(int argc, char *argv[]){
         {.src_file = "core/retrieval.c", .target_file = BUILD_PATH"retrieval.o"},
         {.src_file = "core/sndr_recv.c", .target_file = BUILD_PATH"sndr_recv.o"},
         {.src_file = "core/query_tables.c", .target_file = BUILD_PATH"query_tables.o"},
+        {.src_file = "core/misc.c", .target_file = BUILD_PATH"misc.o"},
     };
 
     for (int i = 0; i < NOB_ARRAY_LEN(objects); i++){
@@ -34,8 +37,10 @@ int main(int argc, char *argv[]){
         nob_cmd_append(&cmd, "-c", "-O3");
         nob_cc_inputs(&cmd, objects[i].src_file);
         nob_cc_output(&cmd, objects[i].target_file);
-        if (!nob_cmd_run(&cmd)) return 1;
+        if (!nob_cmd_run(&cmd, .async = &procs)) return 1;
     }
+    if (!nob_procs_flush(&procs)) return 1;
+    nob_log(NOB_INFO, "--- Objects files build successful ---");
 
 
     nob_log(NOB_INFO, "--- Building tests ---");
@@ -50,6 +55,7 @@ int main(int argc, char *argv[]){
         // {.src_file = TEST_PATH"test_xxhash.c", .target_file = BUILD_PATH"test_xxhash"},
         {.src_file = TEST_PATH"test_chunk_dedup.c", .target_file = BUILD_PATH"test_chunk_dedup"},
         {.src_file = TEST_PATH"test_sender_receiver.c", .target_file = BUILD_PATH"test_sender_receiver"},
+        {.src_file = TEST_PATH"test_janitor.c", .target_file = BUILD_PATH"test_janitor"},
     };
     for (int i = 0; i < NOB_ARRAY_LEN(tests); i++){
         nob_cc(&cmd);
@@ -64,8 +70,9 @@ int main(int argc, char *argv[]){
         nob_cmd_append(&cmd, "-lsqlite3");
         nob_cc_inputs(&cmd, tests[i].src_file);
         nob_cc_output(&cmd, tests[i].target_file);
-        if (!nob_cmd_run(&cmd)) return 1;
+        if (!nob_cmd_run(&cmd, .async = &procs)) return 1;
     }
+    if (!nob_procs_flush(&procs)) return 1;
     nob_log(NOB_INFO, "--- Tests build successful ---");
 
     nob_cc(&cmd);

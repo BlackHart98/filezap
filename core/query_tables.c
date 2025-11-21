@@ -1,4 +1,5 @@
 #include "core.h"
+#include <sys/stat.h>
 
 /* This is a big issue I need to tackle */
 extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s **missing_chunks){
@@ -149,5 +150,107 @@ extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, ch
     fz_log(FZ_INFO, "Chunk metadata committed successfully");
     defer:
         if (NULL != insert) sqlite3_finalize(insert);
+        return result;
+}
+
+
+extern int fz_query_unused_chunk(fz_ctx_t *ctx, fz_hex_digest_t **unused_chunk_list, size_t *nchunk){
+    int result = 1;
+    int ret;
+    sqlite3_stmt *stmt = NULL;
+    struct{fz_hex_digest_t key; uint8_t value;} *chunk_is_ref = NULL;
+    fz_hex_digest_t *buffer = NULL;
+    const char *file_list_sql = "SELECT f.chunk_checksum, f.file_path FROM filezap_chunks AS f;";
+
+    struct {
+        fz_hex_digest_t *digest;
+        char **file_path;
+        // uint8_t *file_not_found;
+    } chunk_checksum_file_path = {0};
+
+    ret = sqlite3_prepare_v2(ctx->db, file_list_sql, -1, &stmt, NULL);
+    if (SQLITE_OK != ret) {
+        fz_log(FZ_ERROR, "Something went wrong here");
+        RETURN_DEFER(0);
+    }
+
+    size_t max_alloc = RESERVED; // preallocate this memory size
+    size_t local_size = 0;
+    chunk_checksum_file_path.digest = calloc(max_alloc, sizeof(fz_hex_digest_t));
+    chunk_checksum_file_path.file_path = calloc(max_alloc, sizeof(char *));
+    if (NULL == chunk_checksum_file_path.digest || NULL == chunk_checksum_file_path.file_path) RETURN_DEFER(0);
+    while (SQLITE_ROW == (ret = sqlite3_step(stmt))){
+        fz_hex_digest_t chunk_checksum = (fz_hex_digest_t)sqlite3_column_int64(stmt, 0);
+        char *file_path = (char *)sqlite3_column_text(stmt, 1);
+        if (local_size >= max_alloc) {
+            max_alloc *= 2;
+            chunk_checksum_file_path.digest = calloc(max_alloc, sizeof(fz_hex_digest_t));
+            chunk_checksum_file_path.file_path = calloc(max_alloc, sizeof(char *));
+            if (NULL == chunk_checksum_file_path.digest || NULL == chunk_checksum_file_path.file_path) RETURN_DEFER(0);
+        }
+        chunk_checksum_file_path.digest[local_size] = chunk_checksum;
+        chunk_checksum_file_path.file_path[local_size] = calloc(strlen(file_path) + 1, sizeof(char));
+        if (NULL == chunk_checksum_file_path.file_path[local_size]) RETURN_DEFER(0);
+
+        strncat(chunk_checksum_file_path.file_path[local_size], file_path, strlen(file_path));
+        local_size++;
+    }
+    if (SQLITE_DONE != ret) RETURN_DEFER(0);
+    fz_log(FZ_INFO, "Total number of chunks: %lu", local_size);
+
+    hmdefault(chunk_is_ref, 0);
+    for (size_t i = 0; i < local_size; i++){
+        struct stat file_meta = {0};
+        uint8_t temp_ = hmget(chunk_is_ref, chunk_checksum_file_path.digest[i]);
+        if (0 == stat(chunk_checksum_file_path.file_path[i], &file_meta)){
+            temp_ |= 1;
+            hmput(chunk_is_ref, chunk_checksum_file_path.digest[i], temp_);
+        } else {
+            fz_log(FZ_INFO, "File %s is no longer available", chunk_checksum_file_path.file_path[i]);
+            hmput(chunk_is_ref, chunk_checksum_file_path.digest[i], temp_);
+        }
+    }
+
+    size_t max_buffer_alloc = local_size;
+    size_t buffer_len = 0;
+    buffer = calloc(max_buffer_alloc, sizeof(fz_hex_digest_t));
+    if (NULL == buffer) RETURN_DEFER(0);
+    for (size_t i = 0; i < hmlenu(chunk_is_ref); i++){
+        if (0 == hmget(chunk_is_ref, chunk_checksum_file_path.digest[i])){
+            buffer[buffer_len] = chunk_checksum_file_path.digest[i];
+            buffer_len++;
+        }
+    }
+
+    *unused_chunk_list = buffer;
+    *nchunk = buffer_len;
+    defer:
+        if (NULL != chunk_checksum_file_path.digest) free(chunk_checksum_file_path.digest);
+        if (NULL != chunk_checksum_file_path.file_path) {
+            for (size_t i = 0; i < local_size; i++){
+                if (NULL != chunk_checksum_file_path.file_path[i]) free(chunk_checksum_file_path.file_path[i]);
+            }
+            free(chunk_checksum_file_path.file_path);
+        }
+        if (NULL != stmt) sqlite3_finalize(stmt);
+        return result;
+}
+
+
+extern int fz_commit_janitor_change(fz_ctx_t *ctx, fz_hex_digest_t *unused_chunk_list, size_t nchunk){
+    int result = 1;
+    sqlite3_stmt *stmt = NULL; 
+    int ret;
+
+    const char *delete_chunk_sql = "DELETE FROM filezap_chunks WHERE chunk_checksum = ?;";
+    ret = sqlite3_prepare_v2(ctx->db, delete_chunk_sql, -1, &stmt, NULL);
+    if (SQLITE_OK != ret) {RETURN_DEFER(0);}
+    for (size_t i = 0; i < nchunk; i++){
+        sqlite3_bind_int64(stmt, 1, unused_chunk_list[i]);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+    }
+    defer:
+        if (NULL != stmt) sqlite3_finalize(stmt);
         return result;
 }
