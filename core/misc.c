@@ -6,6 +6,7 @@ extern int fz_janitor_clean_up(fz_ctx_t *ctx){
     size_t buffer_len = 0;
     char *temp_buffer = NULL;
     size_t temp_buffer_len = strlen(ctx->metadata_loc) + HEX_DIGIT_SIZE + 1;
+    
     temp_buffer = calloc(temp_buffer_len, sizeof(char));
     if (NULL == temp_buffer) RETURN_DEFER(0);
 
@@ -18,7 +19,8 @@ extern int fz_janitor_clean_up(fz_ctx_t *ctx){
         for (size_t i = 0; i < buffer_len; i++){
             snprintf(temp_buffer, temp_buffer_len, "%s%016llx", ctx->metadata_loc, unused_checksum[i]);
             fz_log(FZ_INFO, "Deleting %s chunk", temp_buffer);
-            remove(temp_buffer);
+            int status = remove(temp_buffer);
+            if (0 == status) fz_log(FZ_ERROR, "Failed to delete chunk %s", temp_buffer);
         }
     }
 

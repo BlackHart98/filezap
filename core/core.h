@@ -1,6 +1,7 @@
 #ifndef _SPLITTER_H_
 #define _SPLITTER_H_
 
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,6 +22,13 @@
 #include "stb_ds.h"
 #include "json.h"
 #include "../hash/xxhash.h"
+
+/*
+** Make sure we can call this stuff from C++.
+*/
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 
 #define MKFIFO_IF_ONLY_EXISTS(fifo_path, mode) \
@@ -350,5 +358,9 @@ extern int fz_commit_janitor_change(fz_ctx_t *ctx, fz_hex_digest_t *unused_chunk
 
 
 extern void fz_log(int level, const char *fmt, ...) FZ_PRINTF_FORMAT(2, 3);
+
+#ifdef __cplusplus
+}  /* end of the 'extern "C"' block */
+#endif
 
 #endif /* _SPLITTER_H_ */

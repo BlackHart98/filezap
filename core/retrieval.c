@@ -6,12 +6,8 @@
 #include "core.h"
 
 
-// static inline int fetch_chunk_from_file_cutpoint(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum);
 static inline int fetch_chunk_from_source(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue);
-static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, char *scratchpad, size_t scratchpad_size); /* LRU cache for the chunks */
-// static inline int get_filename(const char *file_path, char **file_name);
-// static inline int download_chunks(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel);
-// static void* download_chunks_(void *arg);
+static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, char *scratchpad, size_t scratchpad_size);
 
 /* Single threaded download */
 static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst);

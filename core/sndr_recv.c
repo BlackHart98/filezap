@@ -460,6 +460,6 @@ static int get_filename(const char *file_path, char **file_name){
     memcpy(buffer, (char *)(file_path + (uintptr_t)(file_path_len - count + 1)), count);
     *file_name = buffer;
     defer:
-        if (!result && NULL != buffer) free(buffer);
+        if (!result && NULL != buffer) {free(buffer); buffer = NULL;}
         return result;
 }
