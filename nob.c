@@ -40,7 +40,7 @@ int main(int argc, char *argv[]){
         if (!nob_cmd_run(&cmd, .async = &procs)) return 1;
     }
     if (!nob_procs_flush(&procs)) return 1;
-    nob_log(NOB_INFO, "--- Objects files build successful ---");
+    nob_log(NOB_INFO, "--- Object files build successful ---");
 
 
     nob_log(NOB_INFO, "--- Building tests ---");
@@ -48,11 +48,9 @@ int main(int argc, char *argv[]){
         const char *src_file;
         const char *target_file;
     } tests [] = {
-        // {.src_file = TEST_PATH"test_filezap_v1.c", .target_file = BUILD_PATH"test_filezap_v1"},
         {.src_file = TEST_PATH"test_sender.c", .target_file = BUILD_PATH"test_sender"},
         // {.src_file = TEST_PATH"test_sender_arb.c", .target_file = BUILD_PATH"test_sender_arb"},
         {.src_file = TEST_PATH"test_receiver.c", .target_file = BUILD_PATH"test_receiver"},
-        // {.src_file = TEST_PATH"test_xxhash.c", .target_file = BUILD_PATH"test_xxhash"},
         {.src_file = TEST_PATH"test_chunk_dedup.c", .target_file = BUILD_PATH"test_chunk_dedup"},
         {.src_file = TEST_PATH"test_sender_receiver.c", .target_file = BUILD_PATH"test_sender_receiver"},
         {.src_file = TEST_PATH"test_janitor.c", .target_file = BUILD_PATH"test_janitor"},
