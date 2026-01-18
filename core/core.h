@@ -15,6 +15,10 @@
     #include <fcntl.h>
     #include <sys/types.h>
     #include <sys/stat.h>
+
+    #include <arpa/inet.h>
+    #include <netinet/in.h>
+    #include <sys/socket.h>
 #else
     #include "sqlite3.h"
 #endif
@@ -172,6 +176,12 @@ typedef struct fz_channel_t{
 } fz_channel_t;
 
 
+typedef struct fz_channel_attr_t{
+    uint16_t port;
+    char *address; 
+} fz_channel_attr_t;
+
+
 typedef struct fz_chunk_request_t{
     fz_chunk_t chunk_meta; /* I might change thisinto a pointer to a chunk instead */
     fz_hex_digest_t checksum;
@@ -235,6 +245,15 @@ struct fz_fifo_channel_s{
     pthread_mutex_t mtx;
     pthread_cond_t done_cv;
 };
+
+
+struct fz_tcp_channel_s{
+    int client_d;
+    int socket_d;
+    pthread_mutex_t mtx;
+    pthread_cond_t done_cv;
+};
+
 
 
 typedef struct fz_ctx_t{
@@ -324,11 +343,13 @@ extern int fz_deserialize_response(char *json, fz_chunk_response_t *response);
 
 
 extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode);
+extern int fz_channel_init_v2(fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr);
 extern void fz_channel_destroy(fz_channel_t *channel);
 extern int fz_channel_read_response(fz_channel_t *channel, char *buffer, size_t data_size, char *scratchpad, size_t scratchpad_size);
 extern int fz_channel_write_response(fz_channel_t *channel, char *buffer, size_t data_size);
 extern int fz_channel_read_request(fz_channel_t *channel, char *buffer, size_t data_size, char *scratchpad, size_t scratchpad_size);
-extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t data_size);
+// extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t data_size);
+extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t data_size, char *scratchpad, size_t scratchpad_size);
 
 extern int fz_cutpoint_list_init(fz_cutpoint_list_t *cutpoint_list);
 extern void fz_cutpoint_list_destroy(fz_cutpoint_list_t *cutpoint_list);
@@ -355,6 +376,9 @@ extern int fz_query_unused_chunk(fz_ctx_t *ctx, fz_hex_digest_t **unused_chunk_l
 
 /* Query: commit janitor change */
 extern int fz_commit_janitor_change(fz_ctx_t *ctx, fz_hex_digest_t *unused_chunk_list, size_t nchunk);
+
+/* Query: migrate */
+extern int fz_migrate(fz_ctx_t *ctx);
 
 
 extern void fz_log(int level, const char *fmt, ...) FZ_PRINTF_FORMAT(2, 3);

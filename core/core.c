@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+#include <poll.h>
 #include "core.h"
 
 #define DEFAULT_METADATA_LOC "tmp/"
@@ -10,7 +11,7 @@
 #define IN_MEMORY_BUFFER_DEFAULT MB(1)
 #define PREFETCH_DEFAULT 4
 
-#define SET_CHUNK_PARAM_DEFAULTS(ctx, chunk_strategy) \
+#define SET_CHUNK_PARAM_DEFAULTS(ctx, chunk_strategy)\
     do {\
         if (FZ_FIXED_SIZED_CHUNK & chunk_strategy){\
             (ctx)->ctx_attrs.chunk_size = FIXED_SIZED_DEFAULT;\
@@ -19,6 +20,12 @@
         }\
         (ctx)->ctx_attrs.prefetch_size = PREFETCH_DEFAULT;\
         (ctx)->ctx_attrs.in_mem_buffer = IN_MEMORY_BUFFER_DEFAULT;\
+    }while(0)
+
+#define SET_TCP_CHANNEL_DEFAULTS(channel_attr)\
+    do{\
+        (channel_attr)->address = "127.0.0.1";\
+        (channel_attr)->port = 2000;\
     }while(0)
 
 int fz_minimal_log_level = FZ_INFO;
@@ -305,6 +312,9 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
 
         channel->channel_desc = buffer; 
     } else if (FZ_TCP_SOCKET & channel_desc){
+        // buffer = calloc(1, sizeof(struct fz_tcp_channel_s));
+        // if (NULL == buffer) RETURN_DEFER(0);
+        // struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)buffer;
         assert(0&&"Todo: Not yet implemented the TCP socket channel");
     } else {
         fz_log(FZ_ERROR, "Unsupported channel, ensure channel passed is supported");
@@ -316,14 +326,164 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
 }
 
 
+extern int fz_channel_init_v2(fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
+    int result = 1;
+    char *buffer = NULL;
+    channel->type = channel_desc;
+    if (FZ_FIFO & channel_desc){
+        buffer = calloc(1, sizeof(struct fz_fifo_channel_s));
+        if (NULL == buffer) RETURN_DEFER(0);
+        struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)buffer;
+#if !defined(_WIN32)
+        MKFIFO_IF_ONLY_EXISTS(REQUEST_FIFO, 0666);
+        MKFIFO_IF_ONLY_EXISTS(RESPONSE_FIFO, 0666);
+#endif  
+        pthread_cond_init(&(c_ptr->done_cv), NULL);
+        pthread_mutex_init(&(c_ptr->mtx), NULL);
+
+        /* Begin: establishing communication channel */
+        c_ptr->request = REQUEST_FIFO;
+        c_ptr->response = RESPONSE_FIFO;
+        if (FZ_SENDER_MODE & mode){
+            c_ptr->request_d = open(c_ptr->request, O_WRONLY);
+            c_ptr->response_d = open(c_ptr->response, O_RDONLY);
+        } else if (FZ_RECEIVER_MODE & mode){
+            c_ptr->request_d = open(c_ptr->request, O_RDONLY);
+            c_ptr->response_d = open(c_ptr->response, O_WRONLY);
+        } else {
+            fz_log(FZ_ERROR, "Failed to create FIFO connection channel");
+            RETURN_DEFER(0);
+        }
+        if (-1 == c_ptr->request_d || -1 == c_ptr->response_d){
+            if (-1 != c_ptr->request_d) close(c_ptr->request_d);
+            if (-1 != c_ptr->response_d) close(c_ptr->response_d);
+            fz_log(FZ_INFO, "Failed to establish channel");
+            RETURN_DEFER(0);
+        }
+        /* end */
+
+        channel->channel_desc = buffer; 
+    } else if (FZ_TCP_SOCKET & channel_desc){
+        buffer = calloc(1, sizeof(struct fz_tcp_channel_s));
+        if (NULL == buffer) RETURN_DEFER(0);
+
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)buffer;
+        pthread_cond_init(&(c_ptr->done_cv), NULL);
+        pthread_mutex_init(&(c_ptr->mtx), NULL);
+
+        fz_channel_attr_t c_attr = {0};
+        if (NULL == channel_attr) SET_TCP_CHANNEL_DEFAULTS(&c_attr);
+        else c_attr = *channel_attr;
+        if (0 == c_attr.address) c_attr.address = "127.0.0.1"; // host: localhost
+        if (0 == c_attr.port) c_attr.port = 2000; // port: 2000
+        struct sockaddr_in server = (struct sockaddr_in){
+            .sin_addr.s_addr = inet_addr(c_attr.address),
+            .sin_family = AF_INET,
+            .sin_port = htons(c_attr.port),
+        };
+
+        c_ptr->client_d = -1;
+        c_ptr->socket_d = -1;
+
+        if (FZ_SENDER_MODE & mode){
+            c_ptr->socket_d = socket(AF_INET, SOCK_STREAM, 0);
+            if (0 > c_ptr->socket_d) {
+                fz_log(FZ_ERROR, "Failed to create socket");
+                RETURN_DEFER(0);
+            }
+            if (0 > connect(c_ptr->socket_d, (struct sockaddr *)&server, sizeof(server))) {
+                fz_log(FZ_ERROR, "Failed to connect to server");
+                close(c_ptr->socket_d);
+                RETURN_DEFER(0);
+            }
+            fz_log(FZ_INFO, "Here is the socket/server file descriptor: %d", c_ptr->socket_d); 
+        } else if (FZ_RECEIVER_MODE & mode){
+            struct sockaddr_in client; 
+            c_ptr->socket_d = socket(AF_INET, SOCK_STREAM, 0);
+            if (c_ptr->socket_d < 0) {
+                fz_log(FZ_ERROR, "Failed to create socket");
+                RETURN_DEFER(0);
+            }
+
+            int opt = 1;
+            if (0 > setsockopt(c_ptr->socket_d, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+                fz_log(FZ_WARNING, "Failed to set SO_REUSEADDR");
+            }
+            
+            fz_log(FZ_INFO, "Here is the socket/client file descriptor: %d", c_ptr->socket_d); 
+            if (0 > bind(c_ptr->socket_d, (struct sockaddr *)&server, sizeof(server))) {
+                fz_log(FZ_ERROR, "Failed to bind");
+                close(c_ptr->socket_d);
+                RETURN_DEFER(0);
+            }
+
+            if (0 > listen(c_ptr->socket_d, 1)) {
+                fz_log(FZ_ERROR, "Failed to listen");
+                close(c_ptr->socket_d);
+                RETURN_DEFER(0);
+            }
+            int n = sizeof(client);
+
+            // I need to fix this part of the code, when it fails to connect
+            // int flags = fcntl(c_ptr->socket_d, F_GETFL);
+            // fcntl(c_ptr->socket_d, F_SETFL, flags | O_NONBLOCK);
+            // struct pollfd poll_d;
+            // poll_d.fd = c_ptr->socket_d;
+            // poll_d.events = POLLIN;
+            // int ready = poll(&poll_d, 1, 100);
+            // if (0 > ready){
+            //     fz_log(FZ_ERROR, "Failed to connect to server");
+            //     close(c_ptr->socket_d);
+            //     RETURN_DEFER(0);
+            // }
+            c_ptr->client_d = accept(c_ptr->socket_d, (struct sockaddr *)&client, (socklen_t *)&n);
+            if (0 > c_ptr->client_d && EAGAIN == errno) {
+                fz_log(FZ_ERROR, "Failed to accept connection");
+                close(c_ptr->socket_d);
+                RETURN_DEFER(0);
+            }
+            
+            fz_log(FZ_INFO, "Accepted client connection on fd: %d", c_ptr->client_d);
+        } else {
+            fz_log(FZ_ERROR, "Invalid mode for TCP channel");
+            RETURN_DEFER(0);
+        }
+        if (-1 == c_ptr->socket_d && (FZ_SENDER_MODE & mode)){
+            fz_log(FZ_INFO, "Failed to establish sender channel");
+            RETURN_DEFER(0);
+        } else if (-1 == c_ptr->client_d && (FZ_RECEIVER_MODE & mode)){
+            fz_log(FZ_INFO, "Failed to establish receiver channel");
+            RETURN_DEFER(0);
+        }
+        channel->channel_desc = buffer; 
+    } else {
+        fz_log(FZ_ERROR, "Unsupported channel type");
+        RETURN_DEFER(0);
+    }
+    defer:
+        if (!result && NULL != buffer){free(buffer); buffer = NULL;}
+        return result;
+}
+
+
 extern void fz_channel_destroy(fz_channel_t *channel){
     if (FZ_FIFO & channel->type){
         struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)channel->channel_desc;
-        pthread_cond_destroy(&(c_ptr->done_cv));
-        pthread_mutex_destroy(&(c_ptr->mtx));
-        if (-1 != c_ptr->request_d || -1 != c_ptr->response_d){
-            if (-1 != c_ptr->request_d) close(c_ptr->request_d);
-            if (-1 != c_ptr->response_d) close(c_ptr->response_d);
+        if (NULL != c_ptr){
+            pthread_cond_destroy(&(c_ptr->done_cv));
+            pthread_mutex_destroy(&(c_ptr->mtx));
+            if (-1 != c_ptr->request_d || -1 != c_ptr->response_d){
+                if (-1 != c_ptr->request_d) close(c_ptr->request_d);
+                if (-1 != c_ptr->response_d) close(c_ptr->response_d);
+            }
+        }
+    } else if (FZ_TCP_SOCKET & channel->type){
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
+        if (NULL != c_ptr){
+            pthread_cond_destroy(&(c_ptr->done_cv));
+            pthread_mutex_destroy(&(c_ptr->mtx));
+            if (-1 != c_ptr->socket_d) close(c_ptr->socket_d);
+            if (-1 != c_ptr->client_d) close(c_ptr->client_d);
         }
     }
     if (NULL != channel->channel_desc) free(channel->channel_desc);

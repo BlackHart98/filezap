@@ -196,7 +196,6 @@ extern int fz_query_unused_chunk(fz_ctx_t *ctx, fz_hex_digest_t **unused_chunk_l
         local_size++;
     }
     if (SQLITE_DONE != ret) RETURN_DEFER(0);
-    fz_log(FZ_INFO, "Total number of chunks: %lu", local_size);
 
     hmdefault(chunk_is_ref, 0);
     for (size_t i = 0; i < local_size; i++){
@@ -206,7 +205,7 @@ extern int fz_query_unused_chunk(fz_ctx_t *ctx, fz_hex_digest_t **unused_chunk_l
             temp_ |= 1;
             hmput(chunk_is_ref, chunk_checksum_file_path.digest[i], temp_);
         } else {
-            fz_log(FZ_INFO, "File %s is no longer available", chunk_checksum_file_path.file_path[i]);
+            // fz_log(FZ_INFO, "File %s is no longer available", chunk_checksum_file_path.file_path[i]);
             hmput(chunk_is_ref, chunk_checksum_file_path.digest[i], temp_);
         }
     }
@@ -224,6 +223,7 @@ extern int fz_query_unused_chunk(fz_ctx_t *ctx, fz_hex_digest_t **unused_chunk_l
 
     *unused_chunk_list = buffer;
     *nchunk = buffer_len;
+    fz_log(FZ_INFO, "Total number of unused chunks: %lu", buffer_len);
     defer:
         if (NULL != chunk_checksum_file_path.digest) free(chunk_checksum_file_path.digest);
         if (NULL != chunk_checksum_file_path.file_path) {

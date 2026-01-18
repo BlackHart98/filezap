@@ -43,12 +43,14 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
 
     char number_as_str[XXSMALL_RESERVED] = {0};
     snprintf(number_as_str, XXSMALL_RESERVED, "%lu", content_size);
+    fz_log(FZ_INFO, "sender: content size: %lukb", content_size/1024);
+    fz_log(FZ_INFO, "Number as string: %s, Actual number: %lu", number_as_str, content_size);
 
-    if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED)) {
+    if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)) {
         fz_log(FZ_ERROR, "Failed to send content size data to destination");
         RETURN_DEFER(0);
     }
-    if (!fz_channel_write_request(channel, buffer, content_size)) {
+    if (!fz_channel_write_request(channel, buffer, content_size, scratchpad, scratchpad_size)) {
         fz_log(FZ_ERROR, "Failed to send serialized manifest data to destination");
         RETURN_DEFER(0);
     }
@@ -77,6 +79,7 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
             flag = strtoul(number_as_str, NULL, 10);
         } while(0);
         if (flag) break;
+        fz_log(FZ_INFO, "Still connected!");
 
         if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)){
             RETURN_DEFER(0);
@@ -109,7 +112,7 @@ extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_fi
         if (fseek(src_fh, cutpoint, SEEK_SET) < 0) RETURN_DEFER(0);
         fread(content_buffer, 1, chunk_size, src_fh);
 
-        if (!fz_channel_write_request(channel, content_buffer, chunk_size)){
+        if (!fz_channel_write_request(channel, content_buffer, chunk_size, scratchpad, scratchpad_size)){
             fz_log(FZ_ERROR, "Failed to send chunk to destination");
             RETURN_DEFER(0);
         }
@@ -153,6 +156,7 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
 
     if (!fz_channel_read_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)) RETURN_DEFER(0);
     size_t content_size = strtoul(number_as_str, NULL, 10);
+    // fz_log(FZ_INFO, "Content hmmmm..., %lu", content_size);
     if (0 == content_size || MAX_MANIFEST_SIZE < content_size) RETURN_DEFER(0);
 
     fz_log(FZ_INFO, "Received manifest json content size: %lukb", content_size/1024);
@@ -173,8 +177,8 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
     fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
 
-    /* Commit new chunk metadata, for now this is just a stub, I have to move thi out of here */
-    if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
+    // /* Commit new chunk metadata, for now this is just a stub, I have to move thi out of here */
+    // if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
     defer:
         /* Notify sender that the files have been sent successfully 
         Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
@@ -346,7 +350,7 @@ extern int fz_deserialize_manifest(const char *json, fz_file_manifest_t *mnfst){
 
 
 /* Add a scratchpad for reader */
-extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t data_size){
+extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t data_size, char *scratchpad, size_t scratchpad_size){
     int result = 1;
     int request_d = -1;
     if (FZ_FIFO & channel->type){
@@ -360,6 +364,23 @@ extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t 
                 fz_log(FZ_INFO, "I think it's a maxxed out issue: %lu", i);
                 pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
             }
+        }
+        pthread_mutex_unlock(&(c_ptr->mtx));
+    } else if (FZ_TCP_SOCKET & channel->type) {
+        fz_log(FZ_INFO, "Writing to TCP server");
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
+        pthread_mutex_lock(&(c_ptr->mtx));
+        request_d = c_ptr->socket_d;
+        
+        size_t total_sent = 0;
+        while (total_sent < data_size) {
+            ssize_t n = send(request_d, buffer + total_sent, data_size - total_sent, 0);
+            if (0 >= n) {
+                fz_log(FZ_ERROR, "Failed to write to TCP server");
+                pthread_mutex_unlock(&(c_ptr->mtx)); 
+                RETURN_DEFER(0);
+            }
+            total_sent += n;
         }
         pthread_mutex_unlock(&(c_ptr->mtx));
     }
@@ -385,10 +406,36 @@ extern int fz_channel_read_request(fz_channel_t *channel, char *buffer, size_t d
             if (-1 == read(request_d, temp_, min)){
                 pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
             }
+            if (NULL == temp_){pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);}
             memcpy(buffer + i, temp_, min);
             memset(temp_, 0, scratchpad_size);
         }
         pthread_mutex_unlock(&(c_ptr->mtx));
+    } else if (FZ_TCP_SOCKET & channel->type) {
+        fz_log(FZ_INFO, "Reading from TCP client");
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
+        pthread_mutex_lock(&(c_ptr->mtx));
+        request_d = c_ptr->client_d;
+        
+        size_t total_read = 0;
+        while (total_read < data_size) {
+            ssize_t n = recv(request_d, buffer + total_read, data_size - total_read, 0);
+            if (n <= 0) {
+                fz_log(FZ_ERROR, "Failed to read from TCP client");
+                pthread_mutex_unlock(&(c_ptr->mtx)); 
+                RETURN_DEFER(0);
+            }
+            total_read += n;
+        }
+        pthread_mutex_unlock(&(c_ptr->mtx));  // ← UNLOCK BEFORE calling write_response
+        
+        // // Send ACK AFTER unlocking
+        // char ack_buf[] = "ACK";
+        // fz_log(FZ_INFO, "Sending ACK");
+        // if (!fz_channel_write_response(channel, ack_buf, sizeof(ack_buf))) {
+        //     fz_log(FZ_ERROR, "Unable to write response to client");
+        //     RETURN_DEFER(0);
+        // }
     }
     defer:
         return result;
@@ -412,8 +459,18 @@ extern int fz_channel_read_response(fz_channel_t *channel, char *buffer, size_t 
             if (-1 == read(response_d, temp_, min)){
                 pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
             }
+            if (NULL == temp_){pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);}
             memcpy(buffer + i, temp_, min);
             memset(temp_, 0, scratchpad_size);
+        }
+        pthread_mutex_unlock(&(c_ptr->mtx));
+    } else if (FZ_TCP_SOCKET & channel->type) {
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
+        pthread_mutex_lock(&(c_ptr->mtx));
+        response_d = c_ptr->socket_d;
+        if (-1 == recv(response_d, buffer, data_size, 0)){
+            fz_log(FZ_ERROR, "Oh no! failed to read from TCP server");
+            pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
         }
         pthread_mutex_unlock(&(c_ptr->mtx));
     }
@@ -436,7 +493,17 @@ extern int fz_channel_write_response(fz_channel_t *channel, char *buffer, size_t
             }
         }
         pthread_mutex_unlock(&(c_ptr->mtx));
+    } else if (FZ_TCP_SOCKET & channel->type) {
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
+        pthread_mutex_lock(&(c_ptr->mtx));
+        response_d = c_ptr->client_d;
+        if (-1 == send(response_d, buffer, data_size, 0)){
+            fz_log(FZ_ERROR, "Oh no! failed to write to TCP client");
+            pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
+        }
+        pthread_mutex_unlock(&(c_ptr->mtx));
     }
+
     defer:
         return result;
 }
