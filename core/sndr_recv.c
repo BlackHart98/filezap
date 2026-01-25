@@ -427,15 +427,7 @@ extern int fz_channel_read_request(fz_channel_t *channel, char *buffer, size_t d
             }
             total_read += n;
         }
-        pthread_mutex_unlock(&(c_ptr->mtx));  // ← UNLOCK BEFORE calling write_response
-        
-        // // Send ACK AFTER unlocking
-        // char ack_buf[] = "ACK";
-        // fz_log(FZ_INFO, "Sending ACK");
-        // if (!fz_channel_write_response(channel, ack_buf, sizeof(ack_buf))) {
-        //     fz_log(FZ_ERROR, "Unable to write response to client");
-        //     RETURN_DEFER(0);
-        // }
+        pthread_mutex_unlock(&(c_ptr->mtx));
     }
     defer:
         return result;

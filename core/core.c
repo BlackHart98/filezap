@@ -30,6 +30,8 @@
 
 int fz_minimal_log_level = FZ_INFO;
 
+static inline int fz_deserialize_config(const char *json, fz_config_t *config);
+
 
 extern int fz_ctx_init(
     fz_ctx_t *ctx,
@@ -509,4 +511,135 @@ extern void fz_cutpoint_list_destroy(fz_cutpoint_list_t *cutpoint_list){
     cutpoint_list->cutpoint = NULL;
     cutpoint_list->chunk_size = NULL;
     cutpoint_list->cutpoint_len = 0;
+}
+
+
+extern int fz_parse_config_file(fz_config_t *config,  const char *config_file_path){
+    int result = 1;
+    FILE *fd = NULL;
+    size_t file_size = 0;
+    struct stat file_meta;
+    char *buffer = NULL;
+
+    fd = fopen(config_file_path, "r");
+    if (NULL == fd){
+        fz_log(FZ_ERROR, "Unable to open file `%s`", config_file_path);
+        RETURN_DEFER(0);
+    }
+
+    if (0 == stat(config_file_path, &file_meta)) file_size = file_meta.st_size;
+    else {
+        fz_log(FZ_ERROR, "Issue encountered while reading file `%s`", config_file_path);
+        RETURN_DEFER(0);
+    }
+    if (0 == file_size){
+        fz_log(FZ_ERROR, "Config file should not be empty `%s`", config_file_path);
+        RETURN_DEFER(0);
+    }
+
+    buffer = calloc(file_size + 1, sizeof(*buffer));
+    if (NULL == buffer) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+
+    fread(buffer, 1, file_size, fd);
+    if (!fz_deserialize_config(buffer, config)){
+        fz_log(FZ_ERROR, "Issue occurred while attempting to deserialze config file");
+        RETURN_DEFER(0);
+    }
+ 
+    defer:
+        if (NULL != fd) fclose(fd);
+        if (NULL != buffer) free(buffer);
+        return result;
+}
+
+
+static inline int fz_deserialize_config(const char *json, fz_config_t *config){
+    int result = 1;
+    struct json_value_s* root = NULL;
+    struct json_object_s* config_json = NULL;
+
+    fz_log(FZ_INFO, "Attempting to deserialize config file");
+
+    root = json_parse(json, strlen(json));
+    if (!root) RETURN_DEFER(0);
+
+    int strategy = 0;
+    char *metadata_loc = NULL;
+    char *target_dir = NULL;
+    char *database_path = NULL;
+    size_t workers = 0;
+    size_t chunk_size = 0;
+    size_t prefetch_size = 0;
+    size_t channel = FZ_FIFO;
+    config_json = (struct json_object_s*)root->payload;
+    if (!config_json || !config_json->length) RETURN_DEFER(0);
+    struct json_object_element_s *elem = NULL;
+    for (size_t i = 0; i < config_json->length; i++){
+        elem = (0 == i)? config_json->start : elem->next;
+        if (NULL == elem) RETURN_DEFER(0);
+        if (0 == strcmp(elem->name->string, "strategy")){
+            struct json_number_s *val = (struct json_number_s *)elem->value->payload;
+            strategy = (int)atoi(val->number);
+        } else if (0 == strcmp(elem->name->string, "metadata_loc")){
+            struct json_string_s *val = (struct json_string_s *)elem->value->payload;
+            metadata_loc = calloc(val->string_size + 1, sizeof(char));
+            if (NULL == metadata_loc) RETURN_DEFER(0);
+            memcpy(metadata_loc, val->string, val->string_size);
+        } else if (0 == strcmp(elem->name->string, "target_dir")){
+            struct json_string_s *val = (struct json_string_s *)elem->value->payload;
+            target_dir = calloc(val->string_size + 1, sizeof(char));
+            if (NULL == target_dir) RETURN_DEFER(0);
+            memcpy(target_dir, val->string, val->string_size);
+        } else if (0 == strcmp(elem->name->string, "database_path")){
+            struct json_string_s *val = (struct json_string_s *)elem->value->payload;
+            database_path = calloc(val->string_size + 1, sizeof(char));
+            if (NULL == database_path) RETURN_DEFER(0);
+            memcpy(database_path, val->string, val->string_size);
+        } else if (0 == strcmp(elem->name->string, "workers")){
+            struct json_number_s *val = (struct json_number_s *)elem->value->payload;
+            workers = (size_t)strtoul(val->number, NULL, 10);
+        } else if (0 == strcmp(elem->name->string, "chunk_size")){
+            struct json_number_s *val = (struct json_number_s *)elem->value->payload;
+            chunk_size = (size_t)strtoul(val->number, NULL, 10);
+        } else if (0 == strcmp(elem->name->string, "prefetch_size")){
+            struct json_number_s *val = (struct json_number_s *)elem->value->payload;
+            prefetch_size = (size_t)strtoul(val->number, NULL, 10);
+        } else if (0 == strcmp(elem->name->string, "channel")){
+            struct json_string_s *val = (struct json_string_s *)elem->value->payload;
+            if (0 == strcmp(val->string, "tcp_socket")) channel = FZ_TCP_SOCKET;
+            else if (0 == strcmp(val->string, "fifo")) channel = FZ_FIFO;
+        }
+    }
+    config->strategy = strategy;
+    config->metadata_loc = metadata_loc;
+    config->target_dir = target_dir;
+    config->database_path = database_path;
+    config->workers = workers;
+    config->chunk_size = chunk_size;
+    config->prefetch_size = prefetch_size;
+    config->channel = channel;
+
+    defer:
+        if (NULL != root) free(root);
+        if (!result){
+            if (NULL != metadata_loc) {free(metadata_loc); metadata_loc = NULL;}
+            if (NULL != target_dir) {free(target_dir); target_dir = NULL;}
+            if (NULL != database_path) {free(database_path); database_path = NULL;}
+        }
+        return result;
+}
+
+
+extern void fz_config_file_destroy(fz_config_t *config){
+    if (NULL != config->metadata_loc) {free(config->metadata_loc); config->metadata_loc = NULL;}
+    if (NULL != config->target_dir) {free(config->target_dir); config->target_dir = NULL;}
+    if (NULL != config->database_path) {free(config->database_path); config->database_path = NULL;}
+    config->strategy = 0;
+    config->workers = 0;
+    config->chunk_size = 0;
+    config->prefetch_size = 0;
+    config->channel = 0;
 }

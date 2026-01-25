@@ -281,6 +281,18 @@ typedef struct fz_cutpoint_list_t{
 } fz_cutpoint_list_t;
 
 
+typedef struct fz_config_t{
+    int strategy;
+    char *metadata_loc;
+    char *target_dir;
+    char *database_path;
+    size_t workers;
+    size_t chunk_size;
+    size_t prefetch_size;
+    size_t channel;
+} fz_config_t;
+
+
 struct cutpoint_map_s {char *key; fz_cutpoint_list_t *value;};
 struct missing_chunks_map_s {fz_hex_digest_t key; int8_t value;};
 
@@ -289,6 +301,8 @@ extern int fz_ctx_init(fz_ctx_t *ctx, int chunk_strategy, const char *metadata_l
 extern void fz_ctx_destroy(fz_ctx_t *ctx);
 extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const char* src_file_path);
 extern int fz_commit_chunk_meta(fz_file_manifest_t *file_mnfst, int db_conn);
+extern int fz_parse_config_file(fz_config_t *config,  const char* config_file_path);
+extern void fz_config_file_destroy(fz_config_t *config);
 
 /* For the first iteration I will make use of a named pipe to simulate a socket communication channel then eventually replace with an actual socket */ 
 extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path);

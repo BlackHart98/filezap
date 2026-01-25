@@ -55,6 +55,7 @@ int main(int argc, char *argv[]){
         {.src_file = TEST_PATH"test_sender_receiver.c", .target_file = BUILD_PATH"test_sender_receiver"},
         {.src_file = TEST_PATH"test_janitor.c", .target_file = BUILD_PATH"test_janitor"},
         {.src_file = TEST_PATH"test_tcp_socket.c", .target_file = BUILD_PATH"test_tcp_socket"},
+        {.src_file = TEST_PATH"test_config_parser.c", .target_file = BUILD_PATH"test_config_parser"},
     };
     for (int i = 0; i < NOB_ARRAY_LEN(tests); i++){
         nob_cc(&cmd);
