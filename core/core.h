@@ -27,6 +27,9 @@
 #include "json.h"
 #include "../hash/xxhash.h"
 
+#define WSA_IMPLEMENTATION
+#include "why_so_arena.h"
+
 /*
 ** Make sure we can call this stuff from C++.
 */
