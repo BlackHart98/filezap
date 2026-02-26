@@ -16,7 +16,8 @@ int main(int argc, char *argv[]){
     fz_channel_t recv_channel = {0};
     fz_config_t config = {0};
 
-    ArenaAllocator wsa_ctx = arena_allocator_init(c_allocator, KB(128), KB(2));
+    ArenaAllocator wsa_ctx = {0};
+    wsa_ctx = arena_allocator_init(c_allocator, KB(128), KB(16));
 
     char *config_file_path = "config/dest/init.json";
 
@@ -30,6 +31,7 @@ int main(int argc, char *argv[]){
         RETURN_DEFER(1);
     }
     fz_log(FZ_INFO, "Receiver context initialized successfully");
+
 
     /* Clean up */
     defer:
