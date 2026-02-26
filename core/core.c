@@ -30,7 +30,7 @@
 
 int fz_minimal_log_level = FZ_INFO;
 
-static inline int fz_deserialize_config(ArenaAllocator *wsa_ctx, const char *json, fz_config_t *config);
+static inline int fz_deserialize_config(arena_allocator_t *wsa_ctx, const char *json, fz_config_t *config);
 
 
 extern int fz_ctx_init(
@@ -328,7 +328,7 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
 }
 
 
-extern int fz_channel_init_v2(ArenaAllocator *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
+extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
     int result = 1;
     channel->type = channel_desc;
     if (FZ_FIFO & channel_desc){
@@ -511,7 +511,7 @@ extern void fz_cutpoint_list_destroy(fz_cutpoint_list_t *cutpoint_list){
 }
 
 
-extern int fz_parse_config_file(ArenaAllocator *wsa_ctx, fz_config_t *config,  const char *config_file_path){
+extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,  const char *config_file_path){
     int result = 1;
     FILE *fd = NULL;
     size_t file_size = 0;
@@ -556,7 +556,7 @@ extern int fz_parse_config_file(ArenaAllocator *wsa_ctx, fz_config_t *config,  c
 }
 
 
-static inline int fz_deserialize_config(ArenaAllocator *wsa_ctx, const char *json, fz_config_t *config){
+static inline int fz_deserialize_config(arena_allocator_t *wsa_ctx, const char *json, fz_config_t *config){
     int result = 1;
     struct json_value_s* root = NULL;
     struct json_object_s* config_json = NULL;

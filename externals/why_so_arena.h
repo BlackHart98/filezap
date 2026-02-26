@@ -1,3 +1,6 @@
+#define WSA_IMPLEMENTATION
+
+
 #ifndef WHY_SO_ARENA_H
 #define WHY_SO_ARENA_H
 
@@ -46,38 +49,39 @@ typedef struct const_slice_t {
 } const_slice_t;
 
 
-typedef struct AllocatorVTable {
+typedef struct allocator_vtable {
 	void (*free)(void *ptr);
 	slice_t (*alloc)(size_t len, size_t size_);
-} AllocatorVTable;
+} allocator_vtable;
 
 
 // linear allocator
-typedef struct Arena {
+typedef struct arena_t {
     unsigned char* base_address;
     size_t capacity; // capacity in bytes
     size_t prev_offset;
     size_t offset;
-} Arena;
+} arena_t;
 
 
 // Linked list with allocator
-typedef struct ArenaLinkedNode {
-    Arena arena;
-    struct ArenaLinkedNode* next;
-} ArenaLinkedNode;
+typedef struct arena_linked_node_t {
+    arena_t arena;
+    struct arena_linked_node_t* next;
+} arena_linked_node_t;
 
 
-typedef struct ArenaAllocator {
+typedef struct arena_allocator_t {
     size_t page_size;
-    AllocatorVTable allocator;
-    ArenaLinkedNode *linkedlist;
-    ArenaLinkedNode *tail_linkedlist;
-} ArenaAllocator;
+    allocator_vtable allocator;
+    arena_linked_node_t *linkedlist;
+    arena_linked_node_t *tail_linkedlist;
+} arena_allocator_t;
 
 
 ARENA_LOCAL slice_t
 make_slice(void *object, size_t len_in_bytes);
+
 
 ARENA_LOCAL const_slice_t
 make_const_slice(const char *object);
@@ -92,7 +96,7 @@ interface_free(void *ptr);
 
 // I just kept it minimal
 
-ARENA_LOCAL const AllocatorVTable c_allocator = (AllocatorVTable){.free = interface_free, .alloc = interface_alloc,};
+ARENA_LOCAL const allocator_vtable c_allocator = (allocator_vtable){.free = interface_free, .alloc = interface_alloc,};
 
 
 ARENA_LOCAL slice_t 
@@ -110,57 +114,57 @@ interface_free(void *ptr){
 
 
 // @todo: Implement resize/realloc
-ARENA_LOCAL Arena 
-arena_init(AllocatorVTable allocator, size_t capacity);
+ARENA_LOCAL arena_t 
+arena_init(allocator_vtable allocator, size_t capacity);
 
 ARENA_LOCAL uintptr_t 
 align_forward(uintptr_t ptr, uintptr_t alignment_);
 
 ARENA_LOCAL slice_t 
-arena_alloc_aligned(Arena *arena, size_t len, size_t size_, size_t alignment_);
+arena_alloc_aligned(arena_t *arena, size_t len, size_t size_, size_t alignment_);
 
 ARENA_LOCAL slice_t 
-arena_resize_aligned(Arena *arena, slice_t old_slice, size_t len, size_t size_, size_t alignment_);
+arena_resize_aligned(arena_t *arena, slice_t old_slice, size_t len, size_t size_, size_t alignment_);
 
 ARENA_LOCAL void 
-arena_reset(Arena *arena);
+arena_reset(arena_t *arena);
 
 ARENA_LOCAL void 
-arena_deinit(AllocatorVTable allocator, Arena *arena);
+arena_deinit(allocator_vtable allocator, arena_t *arena);
 
-ARENA_LOCAL ArenaAllocator 
-arena_allocator_init(AllocatorVTable allocator, size_t capacity, size_t page_size);
+ARENA_LOCAL arena_allocator_t 
+arena_allocator_init(allocator_vtable allocator, size_t capacity, size_t page_size);
 
 ARENA_LOCAL slice_t 
-arena_allocator_alloc_aligned(ArenaAllocator *arena_allocator, size_t len, size_t size_, size_t alignment_);
+arena_allocator_alloc_aligned(arena_allocator_t *arena_allocator, size_t len, size_t size_, size_t alignment_);
 
 ARENA_LOCAL void 
-arena_allocator_reset(ArenaAllocator *arena_allocator);
+arena_allocator_reset(arena_allocator_t *arena_allocator);
 
 ARENA_LOCAL void 
-arena_allocator_deinit(ArenaAllocator *arena_allocator);
+arena_allocator_deinit(arena_allocator_t *arena_allocator);
 
 
 ARENA_LOCAL slice_t
-arena_allocator_resize_aligned(ArenaAllocator *arena_allocator, slice_t allocated_slice, size_t new_len, size_t new_size, size_t alignment_);
+arena_allocator_resize_aligned(arena_allocator_t *arena_allocator, slice_t allocated_slice, size_t new_len, size_t new_size, size_t alignment_);
 
 
 
 #ifdef WSA_IMPLEMENTATION 
-ArenaAllocator 
-arena_allocator_init(AllocatorVTable allocator, size_t capacity, size_t page_size)
+arena_allocator_t 
+arena_allocator_init(allocator_vtable allocator, size_t capacity, size_t page_size)
 {
     assert((0 < page_size)&&"Page size should always be greater than zero");
     assert((0 < capacity)&&"Capacity should always be greater than zero");
     if (capacity < page_size){capacity = page_size;}
-    ArenaLinkedNode *node = NULL;
+    arena_linked_node_t *node = NULL;
     slice_t slice = allocator.alloc(1, sizeof(*node));
-    if (0 == slice.len_in_bytes) return (ArenaAllocator){};
+    if (0 == slice.len_in_bytes) return (arena_allocator_t){};
     node = slice.ptr;
-    Arena new_arena = arena_init(allocator, capacity);
-    if (NULL == new_arena.base_address) return (ArenaAllocator){};
-    *node = (ArenaLinkedNode){.arena = new_arena, .next = NULL,};
-    return (ArenaAllocator){
+    arena_t new_arena = arena_init(allocator, capacity);
+    if (NULL == new_arena.base_address) return (arena_allocator_t){};
+    *node = (arena_linked_node_t){.arena = new_arena, .next = NULL,};
+    return (arena_allocator_t){
         .page_size = page_size,
         .allocator = allocator,
         .linkedlist = node,
@@ -170,24 +174,24 @@ arena_allocator_init(AllocatorVTable allocator, size_t capacity, size_t page_siz
 
 
 slice_t 
-arena_allocator_alloc_aligned(ArenaAllocator *arena_allocator, size_t len, size_t size_, size_t alignment_)
+arena_allocator_alloc_aligned(arena_allocator_t *arena_allocator, size_t len, size_t size_, size_t alignment_)
 {
-    assert((NULL != arena_allocator->linkedlist)&&"Arena allocator was not initialized");
-    ArenaLinkedNode *current_node = arena_allocator->tail_linkedlist;
+    assert((NULL != arena_allocator->linkedlist)&&"arena_t allocator was not initialized");
+    arena_linked_node_t *current_node = arena_allocator->tail_linkedlist;
     slice_t result = arena_alloc_aligned(&(current_node->arena), len, size_, alignment_);
     if (!result.ptr){
         printf("Creating new sizeable arena\n");
         slice_t slice = arena_allocator->allocator.alloc(1, sizeof(*current_node->next));
         if (0 == slice.len_in_bytes) return (slice_t){};
-        ArenaLinkedNode *new_node = slice.ptr;
+        arena_linked_node_t *new_node = slice.ptr;
         if (NULL == new_node) return (slice_t){};
 
         size_t page_allocation = arena_allocator->page_size;
         while (page_allocation < size_ * len) page_allocation += arena_allocator->page_size;
-        Arena new_arena = arena_init(arena_allocator->allocator, page_allocation);
+        arena_t new_arena = arena_init(arena_allocator->allocator, page_allocation);
         if (NULL == new_arena.base_address) return (slice_t){};
 
-        *new_node = (ArenaLinkedNode){
+        *new_node = (arena_linked_node_t){
             .arena = new_arena,
             .next = NULL,
         };
@@ -201,9 +205,9 @@ arena_allocator_alloc_aligned(ArenaAllocator *arena_allocator, size_t len, size_
 
 
 void 
-arena_allocator_reset(ArenaAllocator *arena_allocator)
+arena_allocator_reset(arena_allocator_t *arena_allocator)
 {
-    ArenaLinkedNode *current_node = arena_allocator->linkedlist;
+    arena_linked_node_t *current_node = arena_allocator->linkedlist;
     while (NULL != current_node){
         arena_reset(&(current_node->arena));
         current_node = current_node->next;
@@ -213,11 +217,11 @@ arena_allocator_reset(ArenaAllocator *arena_allocator)
 
 
 void 
-arena_allocator_deinit(ArenaAllocator *arena_allocator)
+arena_allocator_deinit(arena_allocator_t *arena_allocator)
 {
-    ArenaLinkedNode *current_node = arena_allocator->linkedlist;
+    arena_linked_node_t *current_node = arena_allocator->linkedlist;
     while(NULL != current_node){
-        ArenaLinkedNode *temp_next = current_node->next;
+        arena_linked_node_t *temp_next = current_node->next;
         arena_deinit(arena_allocator->allocator, &(current_node->arena));
         arena_allocator->allocator.free(current_node);
         current_node = NULL;
@@ -227,14 +231,14 @@ arena_allocator_deinit(ArenaAllocator *arena_allocator)
 
 
 
-Arena 
-arena_init(AllocatorVTable allocator, size_t capacity)
+arena_t 
+arena_init(allocator_vtable allocator, size_t capacity)
 {
     slice_t buf = allocator.alloc(1, capacity);
     if (0 == buf.len_in_bytes) {
-        return (Arena){};
+        return (arena_t){};
     } else {   
-        return (Arena){.base_address = buf.ptr, .capacity = capacity, .offset = 0};
+        return (arena_t){.base_address = buf.ptr, .capacity = capacity, .offset = 0};
     }
 }
 
@@ -255,7 +259,7 @@ align_forward(uintptr_t ptr, uintptr_t alignment_)
 
 
 slice_t 
-arena_alloc_aligned(Arena *arena, size_t len, size_t size_, size_t alignment_)
+arena_alloc_aligned(arena_t *arena, size_t len, size_t size_, size_t alignment_)
 {
     // assert((MAX_ALIGNMENT > alignment_)&&"Exceeded maximum alignment");
     uintptr_t curr_offset = (uintptr_t)arena->base_address + (uintptr_t)arena->offset;
@@ -272,7 +276,7 @@ arena_alloc_aligned(Arena *arena, size_t len, size_t size_, size_t alignment_)
 
 
 slice_t 
-arena_resize_aligned(Arena *arena, slice_t old_slice, size_t new_len, size_t size_, size_t alignment_)
+arena_resize_aligned(arena_t *arena, slice_t old_slice, size_t new_len, size_t size_, size_t alignment_)
 {   
     slice_t new_slice = arena_alloc_aligned(arena, new_len, size_, alignment_);
     memmove(new_slice.ptr, old_slice.ptr, new_len * size_);
@@ -281,7 +285,7 @@ arena_resize_aligned(Arena *arena, slice_t old_slice, size_t new_len, size_t siz
 
 
 void 
-arena_reset(Arena *arena)
+arena_reset(arena_t *arena)
 {
     arena->offset = 0;
     arena->prev_offset = 0;
@@ -289,7 +293,7 @@ arena_reset(Arena *arena)
 
 
 void 
-arena_deinit(AllocatorVTable allocator, Arena *arena)
+arena_deinit(allocator_vtable allocator, arena_t *arena)
 {
     if (arena->base_address != NULL) allocator.free(arena->base_address);
     arena->base_address = 0;
@@ -300,17 +304,17 @@ arena_deinit(AllocatorVTable allocator, Arena *arena)
 
 
 slice_t
-arena_allocator_resize_aligned(ArenaAllocator *arena_allocator, slice_t allocated_slice, size_t new_len, size_t size_, size_t alignment_)
+arena_allocator_resize_aligned(arena_allocator_t *arena_allocator, slice_t allocated_slice, size_t new_len, size_t size_, size_t alignment_)
 {
     assert((0 < new_len)&&"New length should always be greater than zero");
     assert((0 < size_)&&"New size should always be greater than zero");
     assert((NULL != allocated_slice.ptr)&&"Slice should not be NULL, try to allocatoe it");
-    assert((NULL != arena_allocator->linkedlist)&&"Arena allocator was not initialized");
+    assert((NULL != arena_allocator->linkedlist)&&"arena_t allocator was not initialized");
     slice_t result = (slice_t){};
     if ((new_len * size_) < allocated_slice.len_in_bytes) result = (slice_t){.len_in_bytes = new_len * size_, .ptr = allocated_slice.ptr};
     else {
         // Search for slice's arena
-        ArenaLinkedNode *current_node = arena_allocator->linkedlist;
+        arena_linked_node_t *current_node = arena_allocator->linkedlist;
         uintptr_t arena_lower_bound = 0; uintptr_t arena_upper_bound = 0;
 
         while (NULL != current_node){

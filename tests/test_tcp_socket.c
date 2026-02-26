@@ -16,7 +16,7 @@
 int main(int argc, char *argv[]){
     (void)argc;
     (void)argv;
-    ArenaAllocator wsa_ctx = arena_allocator_init(c_allocator, MB(1), KB(2));
+    arena_allocator_t wsa_ctx = arena_allocator_init(c_allocator, MB(1), KB(2));
 
     const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
     fz_ctx_t snd_fz = {0}, recv_fz = {0};

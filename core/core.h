@@ -304,7 +304,7 @@ extern int fz_ctx_init(fz_ctx_t *ctx, int chunk_strategy, const char *metadata_l
 extern void fz_ctx_destroy(fz_ctx_t *ctx);
 extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const char* src_file_path);
 extern int fz_commit_chunk_meta(fz_file_manifest_t *file_mnfst, int db_conn);
-extern int fz_parse_config_file(ArenaAllocator *wsa_ctx, fz_config_t *config,  const char* config_file_path);
+extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,  const char* config_file_path);
 extern void fz_config_file_destroy(fz_config_t *config);
 
 /* For the first iteration I will make use of a named pipe to simulate a socket communication channel then eventually replace with an actual socket */ 
@@ -360,7 +360,7 @@ extern int fz_deserialize_response(char *json, fz_chunk_response_t *response);
 
 
 extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode);
-extern int fz_channel_init_v2(ArenaAllocator *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr);
+extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr);
 extern void fz_channel_destroy(fz_channel_t *channel);
 extern int fz_channel_read_response(fz_channel_t *channel, char *buffer, size_t data_size, char *scratchpad, size_t scratchpad_size);
 extern int fz_channel_write_response(fz_channel_t *channel, char *buffer, size_t data_size);
