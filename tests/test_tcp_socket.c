@@ -10,10 +10,13 @@
 #define STB_DS_IMPLEMENTATION
 #include "core.h"
 
+#define MB(bytes_) (bytes_ * 1024 * 1024)  
+
 
 int main(int argc, char *argv[]){
     (void)argc;
     (void)argv;
+    ArenaAllocator wsa_ctx = arena_allocator_init(c_allocator, MB(1), KB(2));
 
     const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
     fz_ctx_t snd_fz = {0}, recv_fz = {0};
@@ -31,7 +34,7 @@ int main(int argc, char *argv[]){
             RETURN_DEFER(1);
         }
         fz_log(FZ_INFO, "Sender context initialized successfully");
-        if (!fz_channel_init_v2(&snd_channel, FZ_TCP_SOCKET, FZ_SENDER_MODE, NULL)){
+        if (!fz_channel_init_v2(&wsa_ctx, &snd_channel, FZ_TCP_SOCKET, FZ_SENDER_MODE, NULL)){
             fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender channel", __func__);
             RETURN_DEFER(1);
         }
@@ -47,7 +50,7 @@ int main(int argc, char *argv[]){
             RETURN_DEFER(1);
         }
         fz_log(FZ_INFO, "Receiver context initialized successfully");
-        if (!fz_channel_init_v2(&recv_channel, FZ_TCP_SOCKET, FZ_RECEIVER_MODE, NULL)){
+        if (!fz_channel_init_v2(&wsa_ctx, &recv_channel, FZ_TCP_SOCKET, FZ_RECEIVER_MODE, NULL)){
             fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender channel", __func__);
             RETURN_DEFER(1);
         }
@@ -67,6 +70,7 @@ int main(int argc, char *argv[]){
     defer:
         fz_ctx_destroy(&snd_fz); fz_channel_destroy(&snd_channel);
         fz_ctx_destroy(&recv_fz); fz_channel_destroy(&recv_channel);
+        arena_allocator_deinit(&wsa_ctx);
         return result;
 
 }

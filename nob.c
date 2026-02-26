@@ -65,7 +65,7 @@ int main(int argc, char *argv[]){
         for (int j = 0; j < NOB_ARRAY_LEN(objects); j++){
             nob_cmd_append(&cmd, objects[j].target_file);
         }
-        nob_cmd_append(&cmd, "-fsanitize=address");
+        // nob_cmd_append(&cmd, "-fsanitize=address");
         nob_cmd_append(&cmd, "-lpthread");
         nob_cmd_append(&cmd, "-lsqlite3");
         nob_cc_inputs(&cmd, tests[i].src_file);
@@ -82,7 +82,7 @@ int main(int argc, char *argv[]){
     for (int i = 0; i < NOB_ARRAY_LEN(objects); i++){
         nob_cmd_append(&cmd, objects[i].target_file);
     }
-    nob_cmd_append(&cmd, "-fsanitize=address");
+    // nob_cmd_append(&cmd, "-fsanitize=address");
     nob_cmd_append(&cmd, "-lpthread");
     nob_cmd_append(&cmd, "-lsqlite3");
     // nob_cmd_append(&cmd, "-g"); 

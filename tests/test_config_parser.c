@@ -16,9 +16,11 @@ int main(int argc, char *argv[]){
     fz_channel_t recv_channel = {0};
     fz_config_t config = {0};
 
+    ArenaAllocator wsa_ctx = arena_allocator_init(c_allocator, KB(128), KB(2));
+
     char *config_file_path = "config/dest/init.json";
 
-    if (!fz_parse_config_file(&config, config_file_path)){
+    if (!fz_parse_config_file(&wsa_ctx, &config, config_file_path)){
         fz_log(FZ_ERROR, "Failed to parse config file `%s`", config_file_path);
         RETURN_DEFER(1);
     }
@@ -33,6 +35,6 @@ int main(int argc, char *argv[]){
     defer:
         fz_channel_destroy(&recv_channel);
         fz_ctx_destroy(&recv_fz);
-        fz_config_file_destroy(&config);
+        arena_allocator_deinit(&wsa_ctx);
         return result;
 }

@@ -30,7 +30,7 @@
 
 int fz_minimal_log_level = FZ_INFO;
 
-static inline int fz_deserialize_config(const char *json, fz_config_t *config);
+static inline int fz_deserialize_config(ArenaAllocator *wsa_ctx, const char *json, fz_config_t *config);
 
 
 extern int fz_ctx_init(
@@ -328,14 +328,13 @@ extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
 }
 
 
-extern int fz_channel_init_v2(fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
+extern int fz_channel_init_v2(ArenaAllocator *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
     int result = 1;
-    char *buffer = NULL;
     channel->type = channel_desc;
     if (FZ_FIFO & channel_desc){
-        buffer = calloc(1, sizeof(struct fz_fifo_channel_s));
-        if (NULL == buffer) RETURN_DEFER(0);
-        struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)buffer;
+        slice_t buffer_slice = arena_allocator_alloc(wsa_ctx, struct fz_fifo_channel_s, 1);
+        if (NULL == buffer_slice.ptr) RETURN_DEFER(0);
+        struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)buffer_slice.ptr;
 #if !defined(_WIN32)
         MKFIFO_IF_ONLY_EXISTS(REQUEST_FIFO, 0666);
         MKFIFO_IF_ONLY_EXISTS(RESPONSE_FIFO, 0666);
@@ -364,12 +363,12 @@ extern int fz_channel_init_v2(fz_channel_t *channel, int channel_desc, int mode,
         }
         /* end */
 
-        channel->channel_desc = buffer; 
+        channel->channel_desc = buffer_slice.ptr; 
     } else if (FZ_TCP_SOCKET & channel_desc){
-        buffer = calloc(1, sizeof(struct fz_tcp_channel_s));
-        if (NULL == buffer) RETURN_DEFER(0);
+        slice_t buffer_slice = arena_allocator_alloc(wsa_ctx, struct fz_tcp_channel_s, 1);
+        if (NULL == buffer_slice.ptr) RETURN_DEFER(0);
 
-        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)buffer;
+        struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)buffer_slice.ptr;
         pthread_cond_init(&(c_ptr->done_cv), NULL);
         pthread_mutex_init(&(c_ptr->mtx), NULL);
 
@@ -457,13 +456,12 @@ extern int fz_channel_init_v2(fz_channel_t *channel, int channel_desc, int mode,
             fz_log(FZ_INFO, "Failed to establish receiver channel");
             RETURN_DEFER(0);
         }
-        channel->channel_desc = buffer; 
+        channel->channel_desc = buffer_slice.ptr; 
     } else {
         fz_log(FZ_ERROR, "Unsupported channel type");
         RETURN_DEFER(0);
     }
     defer:
-        if (!result && NULL != buffer){free(buffer); buffer = NULL;}
         return result;
 }
 
@@ -488,7 +486,6 @@ extern void fz_channel_destroy(fz_channel_t *channel){
             if (-1 != c_ptr->client_d) close(c_ptr->client_d);
         }
     }
-    if (NULL != channel->channel_desc) free(channel->channel_desc);
     channel->channel_desc = NULL;
     channel->type = 0;
 }
@@ -514,12 +511,11 @@ extern void fz_cutpoint_list_destroy(fz_cutpoint_list_t *cutpoint_list){
 }
 
 
-extern int fz_parse_config_file(fz_config_t *config,  const char *config_file_path){
+extern int fz_parse_config_file(ArenaAllocator *wsa_ctx, fz_config_t *config,  const char *config_file_path){
     int result = 1;
     FILE *fd = NULL;
     size_t file_size = 0;
     struct stat file_meta;
-    char *buffer = NULL;
 
     fd = fopen(config_file_path, "r");
     if (NULL == fd){
@@ -537,26 +533,30 @@ extern int fz_parse_config_file(fz_config_t *config,  const char *config_file_pa
         RETURN_DEFER(0);
     }
 
-    buffer = calloc(file_size + 1, sizeof(*buffer));
+    slice_t buffer_slice = arena_allocator_alloc(wsa_ctx, char, file_size + 1);
+    if (NULL == buffer_slice.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    char *buffer = buffer_slice.ptr;
     if (NULL == buffer) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
     }
 
     fread(buffer, 1, file_size, fd);
-    if (!fz_deserialize_config(buffer, config)){
+    if (!fz_deserialize_config(wsa_ctx, buffer, config)){
         fz_log(FZ_ERROR, "Issue occurred while attempting to deserialze config file");
         RETURN_DEFER(0);
     }
  
     defer:
         if (NULL != fd) fclose(fd);
-        if (NULL != buffer) free(buffer);
         return result;
 }
 
 
-static inline int fz_deserialize_config(const char *json, fz_config_t *config){
+static inline int fz_deserialize_config(ArenaAllocator *wsa_ctx, const char *json, fz_config_t *config){
     int result = 1;
     struct json_value_s* root = NULL;
     struct json_object_s* config_json = NULL;
@@ -582,21 +582,24 @@ static inline int fz_deserialize_config(const char *json, fz_config_t *config){
         if (NULL == elem) RETURN_DEFER(0);
         if (0 == strcmp(elem->name->string, "strategy")){
             struct json_number_s *val = (struct json_number_s *)elem->value->payload;
-            strategy = (int)atoi(val->number);
+            strategy = (int)atoi(val->number); // magic!?
         } else if (0 == strcmp(elem->name->string, "metadata_loc")){
             struct json_string_s *val = (struct json_string_s *)elem->value->payload;
-            metadata_loc = calloc(val->string_size + 1, sizeof(char));
-            if (NULL == metadata_loc) RETURN_DEFER(0);
+            slice_t metadata_loc_slice = arena_allocator_alloc(wsa_ctx, char, val->string_size + 1);
+            if (NULL == metadata_loc_slice.ptr) RETURN_DEFER(0);
+            metadata_loc = metadata_loc_slice.ptr;
             memcpy(metadata_loc, val->string, val->string_size);
         } else if (0 == strcmp(elem->name->string, "target_dir")){
             struct json_string_s *val = (struct json_string_s *)elem->value->payload;
-            target_dir = calloc(val->string_size + 1, sizeof(char));
-            if (NULL == target_dir) RETURN_DEFER(0);
+            slice_t target_dir_slice = arena_allocator_alloc(wsa_ctx, char, val->string_size + 1);
+            if (NULL == target_dir_slice.ptr) RETURN_DEFER(0);
+            target_dir = target_dir_slice.ptr;
             memcpy(target_dir, val->string, val->string_size);
         } else if (0 == strcmp(elem->name->string, "database_path")){
             struct json_string_s *val = (struct json_string_s *)elem->value->payload;
-            database_path = calloc(val->string_size + 1, sizeof(char));
-            if (NULL == database_path) RETURN_DEFER(0);
+            slice_t database_path_slice = arena_allocator_alloc(wsa_ctx, char, val->string_size + 1);
+            if (NULL == database_path_slice.ptr) RETURN_DEFER(0);
+            database_path = database_path_slice.ptr;
             memcpy(database_path, val->string, val->string_size);
         } else if (0 == strcmp(elem->name->string, "workers")){
             struct json_number_s *val = (struct json_number_s *)elem->value->payload;
@@ -624,22 +627,10 @@ static inline int fz_deserialize_config(const char *json, fz_config_t *config){
 
     defer:
         if (NULL != root) free(root);
-        if (!result){
-            if (NULL != metadata_loc) {free(metadata_loc); metadata_loc = NULL;}
-            if (NULL != target_dir) {free(target_dir); target_dir = NULL;}
-            if (NULL != database_path) {free(database_path); database_path = NULL;}
-        }
         return result;
 }
 
 
 extern void fz_config_file_destroy(fz_config_t *config){
-    if (NULL != config->metadata_loc) {free(config->metadata_loc); config->metadata_loc = NULL;}
-    if (NULL != config->target_dir) {free(config->target_dir); config->target_dir = NULL;}
-    if (NULL != config->database_path) {free(config->database_path); config->database_path = NULL;}
-    config->strategy = 0;
-    config->workers = 0;
-    config->chunk_size = 0;
-    config->prefetch_size = 0;
-    config->channel = 0;
+    *config = (fz_config_t){0};
 }
