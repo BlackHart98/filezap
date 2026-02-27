@@ -187,7 +187,7 @@ arena_allocator_alloc_aligned(arena_allocator_t *arena_allocator, size_t len, si
         if (NULL == new_node) return (slice_t){};
 
         size_t page_allocation = arena_allocator->page_size;
-        while (page_allocation < size_ * len) page_allocation += arena_allocator->page_size;
+        if (page_allocation < size_ * len) page_allocation += (size_ * len);
         arena_t new_arena = arena_init(arena_allocator->allocator, page_allocation);
         if (NULL == new_arena.base_address) return (slice_t){};
 
