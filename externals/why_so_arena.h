@@ -1,6 +1,3 @@
-#define WSA_IMPLEMENTATION
-
-
 #ifndef WHY_SO_ARENA_H
 #define WHY_SO_ARENA_H
 
