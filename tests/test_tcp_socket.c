@@ -18,14 +18,17 @@
 int main(int argc, char *argv[]){
     (void)argc;
     (void)argv;
-    
-    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
 
     const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
     fz_ctx_t snd_fz = {0}, recv_fz = {0};
     fz_channel_t snd_channel = {0};
     fz_channel_t recv_channel = {0};
     int result = 0;
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
+    if (NULL == gpa.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        RETURN_DEFER(1);
+    }
 
     pid_t child_process = fork(); 
     if (-1 == child_process){

@@ -18,7 +18,11 @@ int main(int argc, char *argv[]){
     fz_channel_t recv_channel = {0};
     fz_config_t config = {0};
 
-    arena_allocator_t gpa = arena_allocator_init(c_allocator, KB(128), KB(16));
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
+    if (NULL == gpa.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     char *config_file_path = "config/dest/init.json";
 

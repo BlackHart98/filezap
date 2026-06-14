@@ -12,7 +12,6 @@
 int main(int argc, char *argv[]){
     (void)argc;
     (void)argv;
-    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
     // const char *input_file = "examples/src/Endless, a film by Frank Ocean.mp4";
     // const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
     const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra).mp4";
@@ -21,6 +20,11 @@ int main(int argc, char *argv[]){
     fz_ctx_t snd_fz = {0};
     fz_channel_t snd_channel = {0};
     int result = 0;
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
+    if (NULL == gpa.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     if (!fz_ctx_init(&snd_fz, FZ_FIXED_SIZED_CHUNK, "tmp/", "examples/src/", "filezap.db", NULL, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender context", __func__);

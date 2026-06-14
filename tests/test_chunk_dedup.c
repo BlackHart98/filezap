@@ -19,7 +19,11 @@ int main(int argc, char *argv[]){
     fz_ctx_t my_ctx = {0};
     fz_file_manifest_t mnfst = {0};
 
-    arena_allocator_t gpa = arena_allocator_init(c_allocator, KB(128), KB(16));
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
+    if (NULL == gpa.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
 

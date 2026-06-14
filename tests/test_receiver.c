@@ -18,6 +18,10 @@ int main(int argc, char *argv[]){
     fz_channel_t recv_channel = {0};
 
     arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
+    if (NULL == gpa.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     if (!fz_ctx_init(&recv_fz, FZ_FIXED_SIZED_CHUNK, "dtmp/", "examples/dest/", "filezap.db", NULL, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap reciever context", __func__);
