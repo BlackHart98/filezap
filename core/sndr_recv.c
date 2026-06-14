@@ -6,126 +6,152 @@
 static inline int get_filename(const char *file_path, char **file_name);
 
 /* This is better version of the original send_file, there is not physical copy deposits in the sender cache folder */
-extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path){
+extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path)
+{
     int result = 1;
     fz_file_manifest_t mnfst = {0};
 
-    /* JSON serialized result */
-    char *buffer = NULL;
+    /* Owned by fz_serialize_manifest (malloc internally) — cannot arena-ify
+     * without changing that function's signature.                           */
+    char *manifest_buf = NULL;
 
-    char *response_buffer = NULL;
-    char *scratchpad = NULL;
-    size_t scratchpad_size = LARGE_RESERVED;
-    char *content_buffer = NULL;
-    size_t alloc_size = XSMALL_RESERVED;
-    FILE *src_fh = NULL;
+    arena_allocator_t scratch_arena = arena_allocator_init_page_default(c_allocator, KB(64));
+    if (NULL == scratch_arena.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        /* Nothing arena-owned yet, jump straight to manifest/mnfst cleanup. */
+        RETURN_DEFER(0);
+    }
 
-    scratchpad = calloc(scratchpad_size, sizeof(char));
-    if (NULL == scratchpad) {
+    /* Fixed scratch buffer — allocated once, never resized. */
+    slice_t scratchpad = arena_allocator_alloc(&scratch_arena, char, LARGE_RESERVED);
+    if (NULL == scratchpad.ptr) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
     }
 
-    if (!fz_chunk_file(ctx, &mnfst, src_file_path)){
+    if (!fz_chunk_file(ctx, &mnfst, src_file_path)) {
         fz_log(FZ_ERROR, "%s: Failed to chunk file `%s`", __func__, src_file_path);
         RETURN_DEFER(0);
     }
 
     size_t content_size = 0;
-    if (!fz_serialize_manifest(&mnfst, &buffer, &content_size)) {
+    if (!fz_serialize_manifest(&mnfst, &manifest_buf, &content_size)) {
         fz_log(FZ_ERROR, "Failed to serialize manifest file");
         RETURN_DEFER(0);
     }
     if (0 == content_size || MAX_MANIFEST_SIZE < content_size) {
-        fz_log(FZ_ERROR, "Content size of the manifest file violates the accepted boundary 0 < content_size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
+        fz_log(FZ_ERROR, "Manifest content_size violates 0 < size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
         RETURN_DEFER(0);
     }
 
     char number_as_str[XXSMALL_RESERVED] = {0};
     snprintf(number_as_str, XXSMALL_RESERVED, "%lu", content_size);
-    fz_log(FZ_INFO, "sender: content size: %lukb", content_size/1024);
+    fz_log(FZ_INFO, "sender: content size: %lukb", content_size / 1024);
     fz_log(FZ_INFO, "Number as string: %s, Actual number: %lu", number_as_str, content_size);
 
-    if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)) {
-        fz_log(FZ_ERROR, "Failed to send content size data to destination");
+    if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
+        fz_log(FZ_ERROR, "Failed to send content size to destination");
         RETURN_DEFER(0);
     }
-    if (!fz_channel_write_request(channel, buffer, content_size, scratchpad, scratchpad_size)) {
-        fz_log(FZ_ERROR, "Failed to send serialized manifest data to destination");
+    if (!fz_channel_write_request(channel, manifest_buf, content_size, scratchpad.ptr, scratchpad.len_in_bytes)) {
+        fz_log(FZ_ERROR, "Failed to send serialized manifest to destination");
         RETURN_DEFER(0);
     }
-    
-    /* Waiting for response from the reciever, todo: remove unnecessary memset */
-    size_t flag = 0;
-    size_t chunk_max_alloc = 0;
-    response_buffer = calloc(alloc_size, sizeof(char));
-    if (NULL == response_buffer) {
+
+    /* Response and chunk content buffers — grown on demand via arena resize. */
+    slice_t response_buf = arena_allocator_alloc(&scratch_arena, char, XSMALL_RESERVED);
+    if (NULL == response_buf.ptr) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
     }
-    src_fh = fopen(src_file_path, "rb");
+
+    /* content_buf starts empty; sized on first chunk response. */
+    slice_t content_buf = (slice_t){0};
+
+    FILE *src_fh = fopen(src_file_path, "rb");
     if (NULL == src_fh) {
         fz_log(FZ_ERROR, "Failed to open source file `%s` for read", src_file_path);
         RETURN_DEFER(0);
     }
-    while (1){
-        /* Flag to control connection */
+
+    size_t flag = 0;
+    while (1) {
+        /* Read control flag. */
         do {
-            char number_as_str[XXSMALL_RESERVED] = {0};
-            if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)){
-                fz_log(FZ_ERROR, "Somthing went wrong while trying read control flag data");
+            char flag_str[XXSMALL_RESERVED] = {0};
+            if (!fz_channel_read_response(channel, flag_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
+                fz_log(FZ_ERROR, "Failed to read control flag");
                 RETURN_DEFER(0);
             }
-            flag = strtoul(number_as_str, NULL, 10);
-        } while(0);
+            flag = strtoul(flag_str, NULL, 10);
+        } while (0);
         if (flag) break;
         fz_log(FZ_INFO, "Still connected!");
 
-        if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)){
+        /* Read chunk request size. */
+        if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
             RETURN_DEFER(0);
         }
         content_size = strtoul(number_as_str, NULL, 10);
         if (0 == content_size || MAX_MANIFEST_SIZE < content_size) {
-            fz_log(FZ_ERROR, "Content size of the chunk violates the accepted boundary 0 < content_size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
+            fz_log(FZ_ERROR, "Chunk content_size violates 0 < size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
             RETURN_DEFER(0);
         }
-        if (alloc_size < content_size){
-            response_buffer = realloc(response_buffer, content_size);
-            if (NULL == response_buffer) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
-            alloc_size = content_size;
+
+        /* Grow response buffer if needed. */
+        if (response_buf.len_in_bytes < content_size) {
+            response_buf = arena_allocator_resize(&scratch_arena, char, response_buf, content_size);
+            if (NULL == response_buf.ptr) {
+                fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+                RETURN_DEFER(0);
+            }
         }
-        if (!fz_channel_read_response(channel, response_buffer, alloc_size, scratchpad, scratchpad_size)){
+
+        if (!fz_channel_read_response(
+            channel, 
+            response_buf.ptr, 
+            response_buf.len_in_bytes, 
+            scratchpad.ptr, scratchpad.len_in_bytes)
+        ) {
             RETURN_DEFER(0);
         }
 
         fz_chunk_response_t val = {0};
-        if (!fz_deserialize_response(response_buffer, &val)) RETURN_DEFER(0);
+        if (!fz_deserialize_response(response_buf.ptr, &val)) RETURN_DEFER(0);
 
         size_t chunk_size = mnfst.chunk_seq.chunk_size[val.chunk_index];
-        if (chunk_max_alloc < chunk_size){
-            content_buffer = realloc(content_buffer, chunk_size);
-            if (NULL == content_buffer) {fz_log(FZ_ERROR, "Out of memory error in %s", __func__); RETURN_DEFER(0);}
-            chunk_max_alloc = chunk_size;
-        }
-        memset(content_buffer, 0, chunk_max_alloc);
-        size_t cutpoint = mnfst.chunk_seq.cutpoint[val.chunk_index];
-        if (fseek(src_fh, cutpoint, SEEK_SET) < 0) RETURN_DEFER(0);
-        fread(content_buffer, 1, chunk_size, src_fh);
 
-        if (!fz_channel_write_request(channel, content_buffer, chunk_size, scratchpad, scratchpad_size)){
+        /* Grow chunk content buffer if needed. */
+        if (content_buf.len_in_bytes < chunk_size) {
+            /* arena_allocator_resize requires a non-NULL slice; bootstrap on first use. */
+            if (NULL == content_buf.ptr) {
+                content_buf = arena_allocator_alloc(&scratch_arena, char, chunk_size);
+            } else {
+                content_buf = arena_allocator_resize(&scratch_arena, char, content_buf, chunk_size);
+            }
+            if (NULL == content_buf.ptr) {
+                fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+                RETURN_DEFER(0);
+            }
+        }
+        memset(content_buf.ptr, 0, content_buf.len_in_bytes);
+
+        size_t cutpoint = mnfst.chunk_seq.cutpoint[val.chunk_index];
+        if (fseek(src_fh, (long)cutpoint, SEEK_SET) < 0) RETURN_DEFER(0);
+        fread(content_buf.ptr, 1, chunk_size, src_fh);
+
+        if (!fz_channel_write_request(channel, content_buf.ptr, chunk_size, scratchpad.ptr, scratchpad.len_in_bytes)) {
             fz_log(FZ_ERROR, "Failed to send chunk to destination");
             RETURN_DEFER(0);
         }
-
     }
     fz_log(FZ_INFO, "Closing connection");
+
     defer:
         fz_log(FZ_INFO, "Closed connection");
-        if (NULL != src_fh) fclose(src_fh);
-        if (NULL != response_buffer) free(response_buffer);
-        if (NULL != content_buffer) free(content_buffer);
-        if (NULL != buffer) free(buffer);
-        if (NULL != scratchpad) free(scratchpad);
+        if (NULL != src_fh)    fclose(src_fh);
+        if (NULL != manifest_buf) free(manifest_buf);   /* malloc-owned, not arena */
+        arena_allocator_deinit(&scratch_arena);         /* frees scratchpad, response_buf, content_buf in one shot */
         fz_file_manifest_destroy(&mnfst);
         return result;
 }
@@ -141,44 +167,49 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
     int result = 1;
     fz_file_manifest_t mnfst = {0};
 
-    /* JSON serialized result */
-    char *buffer = NULL;
-    
+    arena_allocator_t scratch_arena = arena_allocator_init_page_default(c_allocator, KB(64));
+    if (NULL == scratch_arena.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        /* Nothing arena-owned yet, jump straight to manifest/mnfst cleanup. */
+        RETURN_DEFER(0);
+    }
+
     char *file_name = NULL;
-    char *file_path_buffer = NULL;
     char number_as_str[XXSMALL_RESERVED] = {0};
-    char *scratchpad = NULL;
-    size_t scratchpad_size = LARGE_RESERVED;
     size_t flag = 0;
 
-    scratchpad = calloc(scratchpad_size, sizeof(char));
-    if (NULL == scratchpad) RETURN_DEFER(0);
+    slice_t scratchpad = arena_allocator_alloc(&scratch_arena, char, LARGE_RESERVED);
+    if (NULL == scratchpad.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
-    if (!fz_channel_read_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad, scratchpad_size)) RETURN_DEFER(0);
+    if (!fz_channel_read_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) RETURN_DEFER(0);
     size_t content_size = strtoul(number_as_str, NULL, 10);
-    // fz_log(FZ_INFO, "Content hmmmm..., %lu", content_size);
+    fz_log(FZ_INFO, "Content hmmmm..., %lu", content_size);
     if (0 == content_size || MAX_MANIFEST_SIZE < content_size) RETURN_DEFER(0);
 
     fz_log(FZ_INFO, "Received manifest json content size: %lukb", content_size/1024);
-    buffer = calloc(content_size, sizeof(char));
-    if (NULL == buffer) RETURN_DEFER(0);
+    slice_t buffer = arena_allocator_alloc(&scratch_arena, char, content_size);
+    if (NULL == buffer.ptr) RETURN_DEFER(0);
+
     
-    if (!fz_channel_read_request(channel, buffer, content_size, scratchpad, scratchpad_size)) RETURN_DEFER(0);
-    if (!fz_deserialize_manifest(buffer, &mnfst)) RETURN_DEFER(0);
+    if (!fz_channel_read_request(channel, buffer.ptr, content_size, scratchpad.ptr, scratchpad.len_in_bytes)) RETURN_DEFER(0);
+    if (!fz_deserialize_manifest(buffer.ptr, &mnfst)) RETURN_DEFER(0);
     if (!get_filename(mnfst.file_name, &file_name)) RETURN_DEFER(0);
 
-    file_path_buffer = calloc(RESERVED, sizeof(char));
-    if (NULL == file_path_buffer) RETURN_DEFER(0);
+    slice_t file_path_buffer = arena_allocator_alloc(&scratch_arena, char, RESERVED);
+    if (NULL == file_path_buffer.ptr) RETURN_DEFER(0);
 
     /* Todo: Use an actual string object */
-    snprintf(file_path_buffer, RESERVED, "%s%s", ctx->target_dir, file_name);
+    snprintf(file_path_buffer.ptr, RESERVED, "%s%s", ctx->target_dir, file_name);
     fz_log(FZ_INFO, "File path: %s", file_path_buffer);
 
-    if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer)) RETURN_DEFER(0);
-    fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer);
+    if (!fz_retrieve_file(ctx, &mnfst, channel, file_path_buffer.ptr)) RETURN_DEFER(0);
+    fz_log(FZ_INFO, "Receive file name: %s", file_path_buffer.ptr);
 
-    // /* Commit new chunk metadata, for now this is just a stub, I have to move this out of here */
-    if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer)) RETURN_DEFER(0);
+    /* Commit new chunk metadata, for now this is just a stub, I have to move this out of here */
+    if (!fz_commit_chunk_metadata(ctx, &mnfst, file_path_buffer.ptr)) RETURN_DEFER(0);
     defer:
         /* Notify sender that the files have been sent successfully 
         Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
@@ -186,10 +217,8 @@ extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel){
         flag = 1;
         SEND_CONN_FLAG(flag); /* Non-zero indicates close connection: This is not a very good idea */
 
-        if (NULL != buffer) free(buffer);
-        if (NULL != scratchpad) free(scratchpad);
         if (NULL != file_name) free(file_name);
-        if (NULL != file_path_buffer) free(file_path_buffer);
+        arena_allocator_deinit(&scratch_arena);
         fz_file_manifest_destroy(&mnfst);
         return result;
 }

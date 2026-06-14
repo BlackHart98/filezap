@@ -1,3 +1,6 @@
+// #define WSA_IMPLEMENTATION
+// I have to handle fragmentation, to avoid waste
+
 #ifndef WHY_SO_ARENA_H
 #define WHY_SO_ARENA_H
 
@@ -22,16 +25,18 @@
 
 // Allocator utils
 #define KB(byte)                                        (byte * 1024UL)
+#define MB(byte)                                        (byte * 1024UL * 1024UL)
 #define DEFAULT_ALIGNMENT                               (2 * sizeof(void *))
 #define DEFAULT_PAGE_SIZE                               KB(2)
 // #define MAX_ALIGNMENT                                   _Alignof(max_align_t)
 
 
 // These are the goodies
-#define arena_allocator_alloc(arena, T, len)            arena_allocator_alloc_aligned(arena, len, sizeof(T), DEFAULT_ALIGNMENT)
-#define arena_allocator_resize(arena, T, old_slice, new_len)           arena_allocator_resize_aligned(arena, old_slice, new_len, sizeof(T), DEFAULT_ALIGNMENT)
-#define arena_allocator_init_page_default(allocator, capacity)    arena_allocator_init(allocator, capacity, DEFAULT_PAGE_SIZE)
-
+#define arena_allocator_alloc(allocator, T, len)                    arena_allocator_alloc_aligned(allocator, len, sizeof(T), DEFAULT_ALIGNMENT)
+#define arena_allocator_alloc_item(allocator, T)                    arena_allocator_alloc_item_aligned(allocator, sizeof(T), DEFAULT_ALIGNMENT);
+#define arena_allocator_resize(allocator, T, old_slice, new_len)    arena_allocator_resize_aligned(allocator, old_slice, new_len, sizeof(T), DEFAULT_ALIGNMENT)
+#define arena_allocator_init_page_default(allocator, capacity)      arena_allocator_init(allocator, capacity, DEFAULT_PAGE_SIZE)
+#define arena_allocator_dup(allocator, input_slice)                 arena_allocator_dup_aligned(allocator, input_slice, DEFAULT_ALIGNMENT)
 
 
 // Slice yippy!
@@ -79,9 +84,14 @@ typedef struct arena_allocator_t {
 ARENA_LOCAL slice_t
 make_slice(void *object, size_t len_in_bytes);
 
+ARENA_LOCAL slice_t
+make_const_slice(char *object);
 
 ARENA_LOCAL const_slice_t
-make_const_slice(const char *object);
+make_const_slice_v1(const char *object);
+
+ARENA_LOCAL int
+slice_equal(const slice_t *lhs, const slice_t *rhs);
 
 ARENA_LOCAL slice_t 
 interface_alloc(size_t len, size_t size_);
@@ -135,6 +145,9 @@ arena_allocator_init(allocator_vtable allocator, size_t capacity, size_t page_si
 ARENA_LOCAL slice_t 
 arena_allocator_alloc_aligned(arena_allocator_t *arena_allocator, size_t len, size_t size_, size_t alignment_);
 
+ARENA_LOCAL void* 
+arena_allocator_alloc_item_aligned(arena_allocator_t *arena_allocator, size_t size_, size_t alignment_);
+
 ARENA_LOCAL void 
 arena_allocator_reset(arena_allocator_t *arena_allocator);
 
@@ -144,6 +157,9 @@ arena_allocator_deinit(arena_allocator_t *arena_allocator);
 
 ARENA_LOCAL slice_t
 arena_allocator_resize_aligned(arena_allocator_t *arena_allocator, slice_t allocated_slice, size_t new_len, size_t new_size, size_t alignment_);
+
+ARENA_LOCAL slice_t
+arena_allocator_dup_aligned(arena_allocator_t *arena_allocator, slice_t input_slice, size_t alignment_);
 
 
 
@@ -177,14 +193,14 @@ arena_allocator_alloc_aligned(arena_allocator_t *arena_allocator, size_t len, si
     arena_linked_node_t *current_node = arena_allocator->tail_linkedlist;
     slice_t result = arena_alloc_aligned(&(current_node->arena), len, size_, alignment_);
     if (!result.ptr){
-        printf("Creating new sizeable arena\n");
+        // printf("Creating new sizeable arena\n");
         slice_t slice = arena_allocator->allocator.alloc(1, sizeof(*current_node->next));
         if (0 == slice.len_in_bytes) return (slice_t){};
         arena_linked_node_t *new_node = slice.ptr;
         if (NULL == new_node) return (slice_t){};
 
         size_t page_allocation = arena_allocator->page_size;
-        if (page_allocation < size_ * len) page_allocation += (size_ * len);
+        while (page_allocation < size_ * len) page_allocation += arena_allocator->page_size;
         arena_t new_arena = arena_init(arena_allocator->allocator, page_allocation);
         if (NULL == new_arena.base_address) return (slice_t){};
 
@@ -197,7 +213,14 @@ arena_allocator_alloc_aligned(arena_allocator_t *arena_allocator, size_t len, si
         return arena_alloc_aligned(&(new_node->arena), len, size_, alignment_);
     }
     return result;
-    
+}
+
+
+void* 
+arena_allocator_alloc_item_aligned(arena_allocator_t *arena_allocator, size_t size_, size_t alignment_)
+{
+    slice_t item_slice = arena_allocator_alloc_aligned(arena_allocator, 1, size_, alignment_);
+    return item_slice.ptr;
 }
 
 
@@ -267,8 +290,9 @@ arena_alloc_aligned(arena_t *arena, size_t len, size_t size_, size_t alignment_)
         arena->offset = offset + (len * size_);
         arena->prev_offset = offset;
         return make_slice(allocated, len * size_);
+    } else {
+        return make_slice(NULL, 0);
     }
-    return make_slice(NULL, 0);
 }
 
 
@@ -276,7 +300,7 @@ slice_t
 arena_resize_aligned(arena_t *arena, slice_t old_slice, size_t new_len, size_t size_, size_t alignment_)
 {   
     slice_t new_slice = arena_alloc_aligned(arena, new_len, size_, alignment_);
-    memmove(new_slice.ptr, old_slice.ptr, new_len * size_);
+    memmove(new_slice.ptr, old_slice.ptr, old_slice.len_in_bytes);
     return new_slice;
 }
 
@@ -318,16 +342,30 @@ arena_allocator_resize_aligned(arena_allocator_t *arena_allocator, slice_t alloc
             arena_lower_bound = (uintptr_t)current_node->arena.base_address;
             arena_upper_bound = arena_lower_bound + current_node->arena.capacity;
             if (arena_lower_bound <= (uintptr_t) allocated_slice.ptr 
-                || arena_upper_bound > (uintptr_t) allocated_slice.ptr){
+                && arena_upper_bound > (uintptr_t) allocated_slice.ptr){
                 break;
             }
+            current_node = current_node->next;
         }
         assert((NULL != current_node)&&"Slice does not point to any arena, ensure you are using the arena the was use to create the slice");
-        result = arena_resize_aligned(&(current_node->arena), allocated_slice, new_len, size_, alignment_);
+        slice_t new_slice = arena_allocator_alloc_aligned(arena_allocator, new_len, size_, alignment_);
+        assert((0 != new_slice.len_in_bytes)&&"Empty slice");
+        memmove(new_slice.ptr, allocated_slice.ptr, allocated_slice.len_in_bytes);
+        result = new_slice;
     }
     return result;
 }
 
+
+slice_t
+arena_allocator_dup_aligned(arena_allocator_t *arena_allocator, slice_t input_slice, size_t alignment_)
+{
+    assert((0 != input_slice.len_in_bytes)&&"Cannot duplicate empty slice");
+    slice_t new_slice = arena_allocator_alloc_aligned(arena_allocator, input_slice.len_in_bytes, 1, alignment_);
+    if (0 == new_slice.len_in_bytes) return (slice_t){0};
+    memmove(new_slice.ptr, input_slice.ptr, input_slice.len_in_bytes);
+    return new_slice;
+}
 
 
 slice_t
@@ -342,18 +380,43 @@ make_slice(void *object, size_t len_in_bytes)
 
 
 const_slice_t
-make_const_slice(const char *object)
+make_const_slice_v1(const char *object)
 {
     size_t len_in_bytes = 0;
     size_t i = 0;
     if (NULL == object) {return (const_slice_t){0};}
     while ('\0' != object[i]){i++;}
-    len_in_bytes = i * sizeof(char) + 1;
+    len_in_bytes = i * sizeof(char);
     return (const_slice_t){
         .buf = object,
         .len_in_bytes = len_in_bytes,
     };
 }
+
+
+slice_t
+make_const_slice(char *object)
+{
+    size_t len_in_bytes = 0;
+    size_t i = 0;
+    if (NULL == object) {return (slice_t){0};}
+    while ('\0' != object[i]){i++;}
+    len_in_bytes = i * sizeof(char);
+    return (slice_t){
+        .ptr = object,
+        .len_in_bytes = len_in_bytes,
+    };
+}
+
+
+int
+slice_equal(const slice_t *lhs, const slice_t *rhs)
+{
+    if (lhs->len_in_bytes != rhs->len_in_bytes) return 0;
+    if (0 == memcmp(lhs->ptr, rhs->ptr, lhs->len_in_bytes)) return 1;
+    return 0;
+}
 #endif
 
 #endif
+

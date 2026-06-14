@@ -4,6 +4,8 @@
 #define XXH_IMPLEMENTATION
 #define JSN_IMPLEMENTATION
 #define STB_DS_IMPLEMENTATION
+#define WSA_IMPLEMENTATION
+#define STRING_LIB_IMPLEMENTATION
 #include "core.h"
 #include <sqlite3.h>
 

@@ -150,6 +150,7 @@ extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, ch
     fz_log(FZ_INFO, "Chunk metadata committed successfully");
     defer:
         if (NULL != insert) sqlite3_finalize(insert);
+        if (NULL != seen_chunk_map) hmfree(seen_chunk_map);
         return result;
 }
 

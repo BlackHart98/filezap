@@ -4,12 +4,17 @@
 #include <poll.h>
 #include "core.h"
 
-#define DEFAULT_METADATA_LOC "tmp/"
-#define SUPPORTED_STRATEGIES (FZ_FIXED_SIZED_CHUNK | FZ_GEAR_CDC_CHUNK)
-#define SUPPORTED_HASHING (FZ_HASH_SHA256 | FZ_HASH_XXHASH)
-#define FIXED_SIZED_DEFAULT KB(64)
-#define IN_MEMORY_BUFFER_DEFAULT MB(1)
-#define PREFETCH_DEFAULT 4
+#define DEFAULT_METADATA_LOC            "tmp/"
+#define SUPPORTED_STRATEGIES            (FZ_FIXED_SIZED_CHUNK | FZ_GEAR_CDC_CHUNK)
+#define SUPPORTED_HASHING               (FZ_HASH_SHA256 | FZ_HASH_XXHASH)
+#define FIXED_SIZED_DEFAULT             KB(64)
+#define IN_MEMORY_BUFFER_DEFAULT        MB(1)
+#define PREFETCH_DEFAULT                4
+#define MAX_RETRIES                     10
+#define ACCEPT_TIMEOUT_MS               10000
+#define SLEEP_NS                        100000
+#define FILEZAP_PORT                    9000
+#define LOCAL_HOST                      "127.0.0.1"
 
 #define SET_CHUNK_PARAM_DEFAULTS(ctx, chunk_strategy)\
     do {\
@@ -30,7 +35,7 @@
 
 int fz_minimal_log_level = FZ_INFO;
 
-static inline int fz_deserialize_config(arena_allocator_t *wsa_ctx, const char *json, fz_config_t *config);
+static inline int fz_deserialize_config(arena_allocator_t *allocator, const char *json, fz_config_t *config);
 
 
 extern int fz_ctx_init(
@@ -276,63 +281,11 @@ extern void fz_log(int level, const char *fmt, ...){
 }
 
 
-extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode){
-    int result = 1;
-    char *buffer = NULL;
-    channel->type = channel_desc;
-    if (FZ_FIFO & channel_desc){
-        buffer = calloc(1, sizeof(struct fz_fifo_channel_s));
-        if (NULL == buffer) RETURN_DEFER(0);
-        struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)buffer;
-#if !defined(_WIN32)
-        MKFIFO_IF_ONLY_EXISTS(REQUEST_FIFO, 0666);
-        MKFIFO_IF_ONLY_EXISTS(RESPONSE_FIFO, 0666);
-#endif  
-        pthread_cond_init(&(c_ptr->done_cv), NULL);
-        pthread_mutex_init(&(c_ptr->mtx), NULL);
-
-        /* Begin: establishing communication channel */
-        c_ptr->request = REQUEST_FIFO;
-        c_ptr->response = RESPONSE_FIFO;
-        if (FZ_SENDER_MODE & mode){
-            c_ptr->request_d = open(c_ptr->request, O_WRONLY);
-            c_ptr->response_d = open(c_ptr->response, O_RDONLY);
-        } else if (FZ_RECEIVER_MODE & mode){
-            c_ptr->request_d = open(c_ptr->request, O_RDONLY);
-            c_ptr->response_d = open(c_ptr->response, O_WRONLY);
-        } else {
-            fz_log(FZ_ERROR, "Failed to create FIFO connection channel");
-            RETURN_DEFER(0);
-        }
-        if (-1 == c_ptr->request_d || -1 == c_ptr->response_d){
-            if (-1 != c_ptr->request_d) close(c_ptr->request_d);
-            if (-1 != c_ptr->response_d) close(c_ptr->response_d);
-            fz_log(FZ_INFO, "Failed to establish channel");
-            RETURN_DEFER(0);
-        }
-        /* end */
-
-        channel->channel_desc = buffer; 
-    } else if (FZ_TCP_SOCKET & channel_desc){
-        // buffer = calloc(1, sizeof(struct fz_tcp_channel_s));
-        // if (NULL == buffer) RETURN_DEFER(0);
-        // struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)buffer;
-        assert(0&&"Todo: Not yet implemented the TCP socket channel");
-    } else {
-        fz_log(FZ_ERROR, "Unsupported channel, ensure channel passed is supported");
-        RETURN_DEFER(0);
-    }
-    defer:
-        if (!result && NULL != buffer){free(buffer); buffer = NULL;}
-        return result;
-}
-
-
-extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
+extern int fz_channel_init_v2(arena_allocator_t *allocator, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr){
     int result = 1;
     channel->type = channel_desc;
     if (FZ_FIFO & channel_desc){
-        slice_t buffer_slice = arena_allocator_alloc(wsa_ctx, struct fz_fifo_channel_s, 1);
+        slice_t buffer_slice = arena_allocator_alloc(allocator, struct fz_fifo_channel_s, 1);
         if (NULL == buffer_slice.ptr) RETURN_DEFER(0);
         struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)buffer_slice.ptr;
 #if !defined(_WIN32)
@@ -365,7 +318,7 @@ extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel,
 
         channel->channel_desc = buffer_slice.ptr; 
     } else if (FZ_TCP_SOCKET & channel_desc){
-        slice_t buffer_slice = arena_allocator_alloc(wsa_ctx, struct fz_tcp_channel_s, 1);
+        slice_t buffer_slice = arena_allocator_alloc(allocator, struct fz_tcp_channel_s, 1);
         if (NULL == buffer_slice.ptr) RETURN_DEFER(0);
 
         struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)buffer_slice.ptr;
@@ -375,8 +328,8 @@ extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel,
         fz_channel_attr_t c_attr = {0};
         if (NULL == channel_attr) SET_TCP_CHANNEL_DEFAULTS(&c_attr);
         else c_attr = *channel_attr;
-        if (0 == c_attr.address) c_attr.address = "127.0.0.1"; // host: localhost
-        if (0 == c_attr.port) c_attr.port = 2000; // port: 2000
+        if (0 == c_attr.address) c_attr.address = LOCAL_HOST;
+        if (0 == c_attr.port) c_attr.port = FILEZAP_PORT;
         struct sockaddr_in server = (struct sockaddr_in){
             .sin_addr.s_addr = inet_addr(c_attr.address),
             .sin_family = AF_INET,
@@ -387,17 +340,29 @@ extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel,
         c_ptr->socket_d = -1;
 
         if (FZ_SENDER_MODE & mode){
-            c_ptr->socket_d = socket(AF_INET, SOCK_STREAM, 0);
-            if (0 > c_ptr->socket_d) {
-                fz_log(FZ_ERROR, "Failed to create socket");
-                RETURN_DEFER(0);
-            }
-            if (0 > connect(c_ptr->socket_d, (struct sockaddr *)&server, sizeof(server))) {
-                fz_log(FZ_ERROR, "Failed to connect to server");
+            int retries = MAX_RETRIES;
+            while (retries > 0){
+                c_ptr->socket_d = socket(AF_INET, SOCK_STREAM, 0);
+                if (0 > c_ptr->socket_d) {
+                    fz_log(FZ_ERROR, "Failed to create socket");
+                    RETURN_DEFER(0);
+                }
+                if (0 == connect(c_ptr->socket_d, (struct sockaddr *)&server, sizeof(server))) break;
                 close(c_ptr->socket_d);
+                c_ptr->socket_d = -1;
+                if (ECONNREFUSED != errno){
+                    fz_log(FZ_ERROR, "Failed to connect to server, errno: %d", errno);
+                    RETURN_DEFER(0);
+                }
+                fz_log(FZ_INFO, "Server not ready, retrying...");
+                usleep(SLEEP_NS);
+                retries--;
+            }
+            if (0 >= retries && -1 == c_ptr->socket_d){
+                fz_log(FZ_ERROR, "Failed to connect after %d retries", MAX_RETRIES);
                 RETURN_DEFER(0);
             }
-            fz_log(FZ_INFO, "Here is the socket/server file descriptor: %d", c_ptr->socket_d); 
+            fz_log(FZ_INFO, "Here is the socket/server file descriptor: %d", c_ptr->socket_d);
         } else if (FZ_RECEIVER_MODE & mode){
             struct sockaddr_in client; 
             c_ptr->socket_d = socket(AF_INET, SOCK_STREAM, 0);
@@ -423,22 +388,23 @@ extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel,
                 close(c_ptr->socket_d);
                 RETURN_DEFER(0);
             }
-            int n = sizeof(client);
 
-            // I need to fix this part of the code, when it fails to connect
-            // int flags = fcntl(c_ptr->socket_d, F_GETFL);
-            // fcntl(c_ptr->socket_d, F_SETFL, flags | O_NONBLOCK);
-            // struct pollfd poll_d;
-            // poll_d.fd = c_ptr->socket_d;
-            // poll_d.events = POLLIN;
-            // int ready = poll(&poll_d, 1, 100);
-            // if (0 > ready){
-            //     fz_log(FZ_ERROR, "Failed to connect to server");
-            //     close(c_ptr->socket_d);
-            //     RETURN_DEFER(0);
-            // }
+            struct pollfd poll_d = {.fd = c_ptr->socket_d, .events = POLLIN,};
+
+            int ready = poll(&poll_d, 1, ACCEPT_TIMEOUT_MS);
+            if (0 == ready){
+                fz_log(FZ_ERROR, "Accept timed out, no client connected");
+                close(c_ptr->socket_d);
+                RETURN_DEFER(0);
+            } else if (0 > ready){
+                fz_log(FZ_ERROR, "Poll error: %d", errno);
+                close(c_ptr->socket_d);
+                RETURN_DEFER(0);
+            }
+
+            int n = sizeof(client);
             c_ptr->client_d = accept(c_ptr->socket_d, (struct sockaddr *)&client, (socklen_t *)&n);
-            if (0 > c_ptr->client_d && EAGAIN == errno) {
+            if (0 > c_ptr->client_d) {
                 fz_log(FZ_ERROR, "Failed to accept connection");
                 close(c_ptr->socket_d);
                 RETURN_DEFER(0);
@@ -511,7 +477,7 @@ extern void fz_cutpoint_list_destroy(fz_cutpoint_list_t *cutpoint_list){
 }
 
 
-extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,  const char *config_file_path){
+extern int fz_parse_config_file(arena_allocator_t *allocator, fz_config_t *config,  const char *config_file_path){
     int result = 1;
     FILE *fd = NULL;
     size_t file_size = 0;
@@ -533,7 +499,7 @@ extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,
         RETURN_DEFER(0);
     }
 
-    slice_t buffer_slice = arena_allocator_alloc(wsa_ctx, char, file_size + 1);
+    slice_t buffer_slice = arena_allocator_alloc(allocator, char, file_size + 1);
     if (NULL == buffer_slice.ptr) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
@@ -545,7 +511,7 @@ extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,
     }
 
     fread(buffer, 1, file_size, fd);
-    if (!fz_deserialize_config(wsa_ctx, buffer, config)){
+    if (!fz_deserialize_config(allocator, buffer, config)){
         fz_log(FZ_ERROR, "Issue occurred while attempting to deserialze config file");
         RETURN_DEFER(0);
     }
@@ -556,7 +522,7 @@ extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,
 }
 
 
-static inline int fz_deserialize_config(arena_allocator_t *wsa_ctx, const char *json, fz_config_t *config){
+static inline int fz_deserialize_config(arena_allocator_t *allocator, const char *json, fz_config_t *config){
     int result = 1;
     struct json_value_s* root = NULL;
     struct json_object_s* config_json = NULL;
@@ -585,19 +551,19 @@ static inline int fz_deserialize_config(arena_allocator_t *wsa_ctx, const char *
             strategy = (int)atoi(val->number); // magic!?
         } else if (0 == strcmp(elem->name->string, "metadata_loc")){
             struct json_string_s *val = (struct json_string_s *)elem->value->payload;
-            slice_t metadata_loc_slice = arena_allocator_alloc(wsa_ctx, char, val->string_size + 1);
+            slice_t metadata_loc_slice = arena_allocator_alloc(allocator, char, val->string_size + 1);
             if (NULL == metadata_loc_slice.ptr) RETURN_DEFER(0);
             metadata_loc = metadata_loc_slice.ptr;
             memcpy(metadata_loc, val->string, val->string_size);
         } else if (0 == strcmp(elem->name->string, "target_dir")){
             struct json_string_s *val = (struct json_string_s *)elem->value->payload;
-            slice_t target_dir_slice = arena_allocator_alloc(wsa_ctx, char, val->string_size + 1);
+            slice_t target_dir_slice = arena_allocator_alloc(allocator, char, val->string_size + 1);
             if (NULL == target_dir_slice.ptr) RETURN_DEFER(0);
             target_dir = target_dir_slice.ptr;
             memcpy(target_dir, val->string, val->string_size);
         } else if (0 == strcmp(elem->name->string, "database_path")){
             struct json_string_s *val = (struct json_string_s *)elem->value->payload;
-            slice_t database_path_slice = arena_allocator_alloc(wsa_ctx, char, val->string_size + 1);
+            slice_t database_path_slice = arena_allocator_alloc(allocator, char, val->string_size + 1);
             if (NULL == database_path_slice.ptr) RETURN_DEFER(0);
             database_path = database_path_slice.ptr;
             memcpy(database_path, val->string, val->string_size);

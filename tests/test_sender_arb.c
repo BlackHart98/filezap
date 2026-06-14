@@ -3,6 +3,8 @@
 #define XXH_STATIC_LINKING_ONLY
 #define XXH_IMPLEMENTATION
 #define STB_DS_IMPLEMENTATION
+#define WSA_IMPLEMENTATION
+#define STRING_LIB_IMPLEMENTATION
 #include "core.h"
 
 int main(int argc, char *argv[]){
@@ -10,7 +12,7 @@ int main(int argc, char *argv[]){
         fz_log(FZ_INFO, "Usage #prog <file> ");
         return 1;
     }
-
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
     const char *input_file = argv[1];
     // const char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
 
@@ -25,7 +27,7 @@ int main(int argc, char *argv[]){
     }
     fz_log(FZ_INFO, "Sender context initialized successfully");
 
-    if (!fz_channel_init(&snd_channel, FZ_FIFO, FZ_SENDER_MODE)){
+    if (!fz_channel_init_v2(&gpa, &snd_channel, FZ_FIFO, FZ_SENDER_MODE, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender channel", __func__);
         RETURN_DEFER(1);
     }
@@ -39,5 +41,6 @@ int main(int argc, char *argv[]){
     defer:
         fz_channel_destroy(&snd_channel);
         fz_ctx_destroy(&snd_fz);
+        arena_allocator_deinit(&gpa);
         return result;
 }

@@ -28,7 +28,9 @@
 #include "../hash/xxhash.h"
 
 #define WSA_IMPLEMENTATION
+#define STRING_LIB_IMPLEMENTATION
 #include "why_so_arena.h"
+#include "string_lib.h"
 
 /*
 ** Make sure we can call this stuff from C++.
@@ -44,20 +46,18 @@ extern "C" {
         (void)ret;\
     }while(0)
 
-#define FZ_INFO 0
-#define FZ_WARNING 1
-#define FZ_ERROR 2
+#define FZ_INFO             0
+#define FZ_WARNING          1
+#define FZ_ERROR            2
 
-#define KB(size_) (size_ * 1024UL) 
-#define MB(size_) (size_ * 1024UL * 1024UL) 
-#define MAX_THREADS 3
-#define MAX_QUEUE_LENGTH 10
-#define RESERVED KB(1)
-#define LARGE_RESERVED KB(4)
-#define XSMALL_RESERVED 256
-#define XXSMALL_RESERVED 128
-#define MAX_MANIFEST_SIZE MB(64)
-#define HEX_DIGIT_SIZE 17
+#define MAX_THREADS         3
+#define MAX_QUEUE_LENGTH    10
+#define RESERVED            KB(1)
+#define LARGE_RESERVED      KB(4)
+#define XSMALL_RESERVED     256
+#define XXSMALL_RESERVED    128
+#define MAX_MANIFEST_SIZE   MB(64)
+#define HEX_DIGIT_SIZE      17
 
 #define RETURN_DEFER(val) do{result = val; goto defer;} while(0)
 #define SERIALIZE_CHUNK(buffer, chunk_checksum, cutpoint, chunk_size)\
@@ -304,7 +304,7 @@ extern int fz_ctx_init(fz_ctx_t *ctx, int chunk_strategy, const char *metadata_l
 extern void fz_ctx_destroy(fz_ctx_t *ctx);
 extern int fz_chunk_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, const char* src_file_path);
 extern int fz_commit_chunk_meta(fz_file_manifest_t *file_mnfst, int db_conn);
-extern int fz_parse_config_file(arena_allocator_t *wsa_ctx, fz_config_t *config,  const char* config_file_path);
+extern int fz_parse_config_file(arena_allocator_t *allocator, fz_config_t *config,  const char* config_file_path);
 extern void fz_config_file_destroy(fz_config_t *config);
 
 /* For the first iteration I will make use of a named pipe to simulate a socket communication channel then eventually replace with an actual socket */ 
@@ -359,8 +359,7 @@ extern int fz_serialize_response(fz_chunk_response_t *response, char **json, siz
 extern int fz_deserialize_response(char *json, fz_chunk_response_t *response);
 
 
-extern int fz_channel_init(fz_channel_t *channel, int channel_desc, int mode);
-extern int fz_channel_init_v2(arena_allocator_t *wsa_ctx, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr);
+extern int fz_channel_init_v2(arena_allocator_t *allocator, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr);
 extern void fz_channel_destroy(fz_channel_t *channel);
 extern int fz_channel_read_response(fz_channel_t *channel, char *buffer, size_t data_size, char *scratchpad, size_t scratchpad_size);
 extern int fz_channel_write_response(fz_channel_t *channel, char *buffer, size_t data_size);

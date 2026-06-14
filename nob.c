@@ -49,7 +49,7 @@ int main(int argc, char *argv[]){
         const char *target_file;
     } tests [] = {
         {.src_file = TEST_PATH"test_sender.c", .target_file = BUILD_PATH"test_sender"},
-        // {.src_file = TEST_PATH"test_sender_arb.c", .target_file = BUILD_PATH"test_sender_arb"},
+        {.src_file = TEST_PATH"test_sender_arb.c", .target_file = BUILD_PATH"test_sender_arb"},
         {.src_file = TEST_PATH"test_receiver.c", .target_file = BUILD_PATH"test_receiver"},
         {.src_file = TEST_PATH"test_chunk_dedup.c", .target_file = BUILD_PATH"test_chunk_dedup"},
         {.src_file = TEST_PATH"test_sender_receiver.c", .target_file = BUILD_PATH"test_sender_receiver"},

@@ -4,6 +4,8 @@
 #define XXH_IMPLEMENTATION
 #define JSN_IMPLEMENTATION
 #define STB_DS_IMPLEMENTATION
+#define WSA_IMPLEMENTATION
+#define STRING_LIB_IMPLEMENTATION
 #include "core.h"
 #include <sqlite3.h>
 
@@ -17,8 +19,7 @@ int main(int argc, char *argv[]){
     fz_ctx_t my_ctx = {0};
     fz_file_manifest_t mnfst = {0};
 
-    arena_allocator_t wsa_ctx = {0};
-    wsa_ctx = arena_allocator_init(c_allocator, KB(128), KB(16));
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, KB(128), KB(16));
 
     char *input_file = "examples/src/Free Nationals - Beauty & Essex (feat. Daniel Caesar & Unknown Mortal Orchestra)(1).mp4";
 
@@ -45,7 +46,7 @@ int main(int argc, char *argv[]){
     defer:
         fz_ctx_destroy(&my_ctx);
         fz_file_manifest_destroy(&mnfst);
-        arena_allocator_deinit(&wsa_ctx);
+        arena_allocator_deinit(&gpa);
         return result;
 }
 

@@ -17,75 +17,87 @@ static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_que
 extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, char *file_name){
     int result = 1;
     FILE *fh = NULL;
-    char *buffer = NULL;
     FILE *dest_fh = NULL;
     fz_dyn_queue_t dq = {0};
     struct cutpoint_map_s *cutpoint_map = NULL;
     struct missing_chunks_map_s *missing_chunks = NULL;
-    char *temp_file_path = NULL;
+
+    arena_allocator_t scratch_arena = arena_allocator_init(c_allocator, KB(64), DEFAULT_PAGE_SIZE);
+    if (NULL == scratch_arena.linkedlist) {
+        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
+        RETURN_DEFER(0);
+    }
+
+    size_t temp_file_path_len = strlen(ctx->target_dir) + strlen("filezap__") + HEX_DIGIT_SIZE;
+    slice_t temp_file_path = arena_allocator_alloc(&scratch_arena, char, temp_file_path_len + 1);
+    if (NULL == temp_file_path.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    snprintf(temp_file_path.ptr, temp_file_path_len + 1, "%sfilezap__%16llx", ctx->target_dir, mnfst->file_checksum);
 
     hmdefault(missing_chunks, 1);
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         hmput(missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 1);
     }
 
-    if(!fz_dyn_queue_init(&dq, RESERVED)){
+    if (!fz_dyn_queue_init(&dq, RESERVED)){
         fz_log(FZ_ERROR, "Out of memory ah error!");
         RETURN_DEFER(0);
     }
 
-    /* Todo: revisit this multithreaded fetch */
     if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, &cutpoint_map, &missing_chunks, file_name)){
         fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
         RETURN_DEFER(0);
     }
-
     fz_log(FZ_INFO, "File from cutpoint successful");
-    /* Todo: revisit this multithreaded download */
+
     if (!download_chunks_st(ctx, &dq, channel, mnfst)){
         fz_log(FZ_ERROR, "Something went wrong while trying to download missing chunk");
         RETURN_DEFER(0);
     }
 
-    size_t temp_file_path_len = strlen(ctx->target_dir) + strlen("filezap__") + HEX_DIGIT_SIZE;
-    temp_file_path = calloc(temp_file_path_len + 1, sizeof(char));
-    if (NULL == temp_file_path) RETURN_DEFER(0);
-    snprintf(temp_file_path, temp_file_path_len + 1, "%sfilezap__%16llx", ctx->target_dir, mnfst->file_checksum); 
-
-    dest_fh = fopen(temp_file_path, "w+b");
+    dest_fh = fopen(temp_file_path.ptr, "w+b");
     if (NULL == dest_fh) {
         fz_log(FZ_INFO, "Destination handle failed");
         RETURN_DEFER(0);
     }
-    char receiver_chnk_loc[RESERVED];
-    size_t max_alloc = 0;
+
+    /* Pre-allocate buffer at max chunk size to avoid per-iteration resize */
+    size_t max_chunk_size = 0;
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        size_t min = (mnfst->file_size - (mnfst->chunk_seq.chunk_size[i] * i)) < mnfst->chunk_seq.chunk_size[i]? 
-            (mnfst->file_size - (mnfst->chunk_seq.chunk_size[i] * i)) : mnfst->chunk_seq.chunk_size[i];
-        if (max_alloc < min){
-            max_alloc = min;
-            buffer = realloc(buffer, max_alloc * sizeof(char));
-            memset(buffer, 0, max_alloc * sizeof(char));
-        }
-        if (NULL == buffer) RETURN_DEFER(0);
+        if (max_chunk_size < mnfst->chunk_seq.chunk_size[i])
+            max_chunk_size = mnfst->chunk_seq.chunk_size[i];
+    }
+    slice_t buffer = arena_allocator_alloc(&scratch_arena, char, max_chunk_size);
+    if (NULL == buffer.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    char receiver_chnk_loc[RESERVED];
+
+    for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
+        memset(buffer.ptr, 0, buffer.len_in_bytes);
+        size_t remaining = mnfst->file_size - mnfst->chunk_seq.cutpoint[i];
+        size_t min = remaining < mnfst->chunk_seq.chunk_size[i] ? remaining : mnfst->chunk_seq.chunk_size[i];
+
         snprintf(receiver_chnk_loc, RESERVED, "%s%016llx", ctx->metadata_loc, mnfst->chunk_seq.chunk_checksum[i]);
 
         fh = fopen(receiver_chnk_loc, "rb");
         if (NULL == fh) RETURN_DEFER(0);
-        fread(buffer, 1, min, fh);
-        fwrite(buffer, 1, min, dest_fh);
-        fclose(fh);
-        memset(buffer, 0, max_alloc * sizeof(char));
+        fread(buffer.ptr, 1, min, fh);
+        fwrite(buffer.ptr, 1, min, dest_fh);
+        fclose(fh); fh = NULL;
     }
 
     fz_hex_digest_t digest = 0;
-    xxhash_hexdigest_from_file(dest_fh, &digest); /* this guy is reading the destination file `dest_fh` */
+    xxhash_hexdigest_from_file(dest_fh, &digest);
     fz_log(FZ_INFO, "Calculating the file checksum");
     if (mnfst->file_checksum != digest) {
         fz_log(FZ_INFO, "Retrieval error, corrupted file");
         RETURN_DEFER(0);
     }
-    if (0 != rename(temp_file_path, file_name)) {
+    if (0 != rename(temp_file_path.ptr, file_name)) {
         fz_log(FZ_ERROR, "Failed to rename file to %s", file_name);
         RETURN_DEFER(0);
     }
@@ -93,23 +105,19 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     size_t count = 0;
     for (size_t i = 0; i < hmlenu(missing_chunks); i++){
         fz_hex_digest_t key = missing_chunks[i].key;
-        if (1 == hmget(missing_chunks, key)){
-            // fz_log(FZ_INFO, "chunk checksum: %llu", key);
-            count++;
-        }
+        if (1 == hmget(missing_chunks, key)) count++;
     }
     fz_log(FZ_INFO, "Here are the missing chunks size(%lu): ", count);
+
     defer:
-        if (NULL != fh) fclose(fh);
-        if (NULL != buffer) free(buffer);
-        if (NULL != dest_fh) fclose(dest_fh);
+        if (NULL != fh)             fclose(fh);
+        if (NULL != dest_fh)        fclose(dest_fh);
         if (NULL != missing_chunks) hmfree(missing_chunks);
-        if (NULL != cutpoint_map){shfree(cutpoint_map);}
-        if (NULL != temp_file_path) free(temp_file_path);
+        if (NULL != cutpoint_map)   shfree(cutpoint_map);
         fz_dyn_queue_destroy(&dq);
+        arena_allocator_deinit(&scratch_arena);
         return result;
 }
-
 
 extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks, char *dest_file_path){
     (void)channel;

@@ -4,6 +4,8 @@
 #define XXH_STATIC_LINKING_ONLY
 #define XXH_IMPLEMENTATION
 #define STB_DS_IMPLEMENTATION
+#define WSA_IMPLEMENTATION
+#define STRING_LIB_IMPLEMENTATION
 #include "core.h"
 
 
@@ -16,17 +18,22 @@ int main(int argc, char *argv[]){
     fz_channel_t recv_channel = {0};
     fz_config_t config = {0};
 
-    arena_allocator_t wsa_ctx = {0};
-    wsa_ctx = arena_allocator_init(c_allocator, KB(128), KB(16));
+    arena_allocator_t gpa = arena_allocator_init(c_allocator, KB(128), KB(16));
 
     char *config_file_path = "config/dest/init.json";
 
-    if (!fz_parse_config_file(&wsa_ctx, &config, config_file_path)){
+    if (!fz_parse_config_file(&gpa, &config, config_file_path)){
         fz_log(FZ_ERROR, "Failed to parse config file `%s`", config_file_path);
         RETURN_DEFER(1);
     }
 
-    if (!fz_ctx_init(&recv_fz, config.strategy, config.metadata_loc, config.target_dir, config.database_path, NULL, NULL)){
+    if (!fz_ctx_init(
+        &recv_fz, 
+        config.strategy, 
+        config.metadata_loc, 
+        config.target_dir, 
+        config.database_path, NULL, NULL)
+    ){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap reciever context", __func__);
         RETURN_DEFER(1);
     }
@@ -37,6 +44,6 @@ int main(int argc, char *argv[]){
     defer:
         fz_channel_destroy(&recv_channel);
         fz_ctx_destroy(&recv_fz);
-        arena_allocator_deinit(&wsa_ctx);
+        arena_allocator_deinit(&gpa);
         return result;
 }
