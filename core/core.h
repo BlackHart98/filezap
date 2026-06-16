@@ -29,7 +29,9 @@
 
 #define WSA_IMPLEMENTATION
 #define STRING_LIB_IMPLEMENTATION
+#define ARRAY_LIST_IMPLEMENTATION
 #include "why_so_arena.h"
+#include "array_list.h"
 #include "string_lib.h"
 
 /*
@@ -308,8 +310,8 @@ extern int fz_parse_config_file(arena_allocator_t *allocator, fz_config_t *confi
 extern void fz_config_file_destroy(fz_config_t *config);
 
 /* For the first iteration I will make use of a named pipe to simulate a socket communication channel then eventually replace with an actual socket */ 
-extern int fz_send_file(fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path);
-extern int fz_receive_file(fz_ctx_t *ctx, fz_channel_t *channel);
+extern int fz_send_file(context_t *context, fz_ctx_t *ctx, fz_channel_t *channel, const char *src_file_path);
+extern int fz_receive_file(context_t *context, fz_ctx_t *ctx, fz_channel_t *channel);
 extern int fz_serialize_manifest(fz_file_manifest_t *mnfst, char **json, size_t *json_size);
 extern int fz_deserialize_manifest(const char *json, fz_file_manifest_t *mnfst);
 
@@ -319,8 +321,8 @@ extern void* fz_fetch_chunk(void *);
 
 /* Fetch file from manifest */ 
 extern int fz_fetch_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue);
-extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, char *file_name);
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks, char *dest_file_path);
+extern int fz_retrieve_file(context_t *context, fz_ctx_t *ctx, fz_file_manifest_t *file_mnfst, fz_channel_t *channel, char *file_name);
+extern int fz_fetch_file_st(context_t *context, fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s *missing_chunks, char *dest_file_path);
 
 extern int fz_chunk_init(fz_chunk_seq_t *chnk);
 extern void fz_chunk_destroy(fz_chunk_seq_t *chnk);
@@ -355,7 +357,7 @@ extern int xxhash_hexdigest_from_file(FILE *fd, fz_hex_digest_t *digest);
 extern int xxhash_hexdigest_from_file_prime(fz_hex_digest_t *digest, fz_hex_digest_t *digest_list, size_t digest_list_len);
 
 
-extern int fz_serialize_response(fz_chunk_response_t *response, char **json, size_t *json_size);
+extern int fz_serialize_response(context_t *context, fz_chunk_response_t *response, string_t *json_str);
 extern int fz_deserialize_response(char *json, fz_chunk_response_t *response);
 
 
@@ -371,18 +373,19 @@ extern int fz_cutpoint_list_init(fz_cutpoint_list_t *cutpoint_list);
 extern void fz_cutpoint_list_destroy(fz_cutpoint_list_t *cutpoint_list);
 
 extern int fz_fetch_chunks_from_file_cutpoint(
+    context_t *context,
     fz_ctx_t *ctx, 
     fz_file_manifest_t *mnfst, 
     fz_chunk_t *chunk_buffer, 
     size_t nchunk, 
     struct cutpoint_map_s **cutpoint_map,
-    struct missing_chunks_map_s **missing_chunks,
+    struct missing_chunks_map_s *missing_chunks,
     char *dest_file_path);
 
 extern int fz_janitor_clean_up(fz_ctx_t *ctx);
 
 /* Query: find required chunk list */
-extern int fz_query_required_chunk_list(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s **missing_chunks);
+extern int fz_query_required_chunk_list(context_t *context, fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_chunk_t **chunk_buffer, size_t *nchunk, struct missing_chunks_map_s *missing_chunks);
 
 /* Query: commit chunk metadata */
 extern int fz_commit_chunk_metadata(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, char *dest_file_path);

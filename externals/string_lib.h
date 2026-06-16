@@ -6,14 +6,9 @@
 
 
 #include "why_so_arena.h"
+#include "array_list.h"
 
 #define STRING_LIB_LOCAL static
-
-typedef enum STR_RESULT {
-    STR_SUCCESS,
-    STR_OOM
-} str_result_t;
-
 
 typedef struct string_t{
     size_t capacity;
@@ -32,6 +27,10 @@ string_lib_init_slice(arena_allocator_t *allocator, slice_t src_slice);
 
 STRING_LIB_LOCAL slice_t 
 string_lib_to_slice(const string_t *dst);
+
+
+STRING_LIB_LOCAL slice_t 
+string_lib_to_slice_chunk(const string_t *dst, size_t offset, size_t len);
 
 
 STRING_LIB_LOCAL int 
@@ -54,6 +53,16 @@ string_lib_string_equal(string_t *lhs, string_t *rhs);
 
 STRING_LIB_LOCAL int 
 string_lib_slice_to_cstring(arena_allocator_t *allocator, slice_t src_slice, char **cstring);
+
+STRING_LIB_LOCAL slice_t 
+string_lib_cstring_in_slice(string_t *str, slice_t *cstring_slice);
+
+
+STRING_LIB_LOCAL array_list_t
+string_lib_split_string(arena_allocator_t *allocator, string_t *str, slice_t pattern_slice);
+
+STRING_LIB_LOCAL string_t
+string_lib_shrink_len(string_t *str, size_t shrink_len);
 
 typedef struct string_fragment_t {
     slice_t data;
@@ -88,9 +97,6 @@ string_lib_sb_append(string_builder_t *sb, const char *str);
 STRING_LIB_LOCAL string_t 
 string_lib_sb_get_string(string_builder_t *sb, arena_allocator_t *allocator);
 
-STRING_LIB_LOCAL int
-string_lib_sb_get_cstring(string_builder_t *sb, arena_allocator_t *allocator, char **cstring);
-
 
 
 #ifdef STRING_LIB_IMPLEMENTATION
@@ -112,7 +118,6 @@ string_t
 string_lib_init_slice(arena_allocator_t *allocator, slice_t src_slice)
 {
     slice_t string_slice = arena_allocator_alloc(allocator, char, src_slice.len_in_bytes << 1);
-    if (NULL == string_slice.ptr) return (string_t){0};
     memmove(string_slice.ptr, src_slice.ptr, src_slice.len_in_bytes);
     return (string_t){
         .capacity = src_slice.len_in_bytes << 1,
@@ -181,11 +186,12 @@ string_lib_append_strlit(arena_allocator_t *allocator, string_t *dst, const char
 
 
 int
-string_lib_append_slice(arena_allocator_t *allocator, string_t *dst, const slice_t str_slice){
-    if (0 == str_slice.len_in_bytes) return 0;
+string_lib_append_slice(arena_allocator_t *allocator, string_t *dst, const slice_t str_slice)
+{
+    if (NULL == str_slice.ptr) return 0;
     size_t expected_len = dst->len + str_slice.len_in_bytes;
     slice_t new_slice = (slice_t){.len_in_bytes = dst->capacity, .ptr = dst->ptr};
-    if (0 == new_slice.len_in_bytes) return 1;
+    if (NULL == new_slice.ptr) return 1;
     if (dst->capacity < expected_len){
         dst->capacity = expected_len << 1;
         new_slice = arena_allocator_resize(allocator, char, new_slice, dst->capacity);
@@ -213,7 +219,7 @@ string_lib_append_char(arena_allocator_t *allocator, string_t *dst, const char s
 {
     size_t expected_len = dst->len + 1;
     slice_t new_slice = (slice_t){.len_in_bytes = dst->capacity, .ptr = dst->ptr};
-    if (0 == new_slice.len_in_bytes) return 1;
+    if (NULL == new_slice.ptr) return 1;
     if (dst->capacity < expected_len){
         dst->capacity = expected_len << 1;
         new_slice = arena_allocator_resize(allocator, char, new_slice, dst->capacity);
@@ -229,7 +235,7 @@ int
 string_lib_to_cstring(arena_allocator_t *allocator, string_t *string, char **cstring)
 {
     slice_t cstring_slice = arena_allocator_alloc(allocator, char, string->len + 1);
-    if (0 == cstring_slice.len_in_bytes) return 1;
+    if (NULL == cstring_slice.ptr) return 1;
     assert((0 != cstring_slice.len_in_bytes)&&"Unable to allocate slice");
     memset(cstring_slice.ptr, 0, cstring_slice.len_in_bytes);
     memmove(cstring_slice.ptr, string->ptr, string->len);
@@ -242,7 +248,7 @@ int
 string_lib_slice_to_cstring(arena_allocator_t *allocator, slice_t src_slice, char **cstring)
 {
     slice_t cstring_slice = arena_allocator_alloc(allocator, char, src_slice.len_in_bytes + 1);
-    if (0 == cstring_slice.len_in_bytes) return 1;
+    if (NULL == cstring_slice.ptr) return 1;
     assert((0 != cstring_slice.len_in_bytes)&&"Unable to allocate slice");
     memset(cstring_slice.ptr, 0, cstring_slice.len_in_bytes);
     memmove(cstring_slice.ptr, src_slice.ptr, src_slice.len_in_bytes);
@@ -257,6 +263,69 @@ string_lib_string_equal(string_t *lhs, string_t *rhs)
     slice_t l = string_lib_to_slice(lhs);
     slice_t r = string_lib_to_slice(rhs);
     return slice_equal(&l, &r);
+}
+
+
+array_list_t
+string_lib_split_string(arena_allocator_t *allocator, string_t *str, slice_t pattern_slice)
+{
+    array_list_t string_splits = array_list_init_capacity(allocator, slice_t, 1);
+    if (NULL == string_splits.ptr) return (array_list_t){0};
+    size_t offset = 0;
+    size_t i = offset;
+    for (; i < str->len; i++){
+        if ((i + pattern_slice.len_in_bytes) >= str->len) break;
+        slice_t temp = string_lib_to_slice_chunk(str, i, pattern_slice.len_in_bytes);
+        if (slice_equal(&pattern_slice, &temp)){
+            slice_t item = string_lib_to_slice_chunk(str, offset, (i - offset));
+            int ret = array_list_append_item_fn(allocator, &string_splits, (char *)&item);
+            if (0 != ret) return (array_list_t){0};
+            i += pattern_slice.len_in_bytes;
+            offset = i;
+        }
+    }
+    if (i < str->len){
+        slice_t item = string_lib_to_slice_chunk(str, offset, (str->len - offset));
+        int ret = array_list_append_item_fn(allocator, &string_splits, (char *)&item);
+        if (0 != ret) return (array_list_t){0};
+    }
+    return string_splits;
+}
+
+
+slice_t 
+string_lib_to_slice_chunk(const string_t *dst, size_t offset, size_t len)
+{
+    assert(((offset + len) <= dst->len)&&"Slice is out of bounds");
+    return (slice_t){
+        .ptr = &(dst->ptr[offset]),
+        .len_in_bytes = len
+    };
+}
+
+
+string_t
+string_lib_shrink_len(string_t *str, size_t shrink_len)
+{
+    assert((shrink_len <= str->len)&&"Shrink length should be less or equal than string length");
+    return (string_t){
+        .capacity = str->capacity,
+        .len = shrink_len,
+        .ptr = str->ptr
+    };
+}
+
+
+slice_t 
+string_lib_cstring_in_slice(string_t *str, slice_t *cstring_slice)
+{
+    assert((str->len < cstring_slice->len_in_bytes)&&"Slice cannot hold string");
+    memset(cstring_slice->ptr, 0, cstring_slice->len_in_bytes);
+    memcpy(cstring_slice->ptr, str->ptr, str->len);
+    return (slice_t){
+        .ptr = cstring_slice->ptr,
+        .len_in_bytes = cstring_slice->len_in_bytes,
+    };
 }
 
 
@@ -277,19 +346,14 @@ string_lib_sb_append(string_builder_t *sb, const char *strlit)
 {
     string_fragment_t *new_node = (string_fragment_t *) arena_allocator_alloc_item(sb->allocator, string_fragment_t);
     string_t str = string_lib_init_with_strlit(sb->allocator, strlit);
-    if (NULL == str.ptr) return STR_OOM;
     new_node->data = string_lib_to_slice(&str);
     new_node->next = NULL;
-
-    if (NULL == sb->head) {
-        sb->head = new_node;
-        sb->tail = new_node;
-    } else {
-        sb->tail->next = new_node;
-        sb->tail = new_node;
+    string_fragment_t *current_node = sb->head;
+    while(current_node->next->next != NULL){
+        current_node = current_node->next;
     }
-    sb->count++;
-    return STR_SUCCESS;
+    current_node->next->next = new_node;
+    return 0;
 }
 
 
@@ -311,15 +375,7 @@ string_lib_sb_get_string(string_builder_t *sb, arena_allocator_t *allocator)
 }
 
 
-int
-string_lib_sb_get_cstring(string_builder_t *sb, arena_allocator_t *allocator, char **cstring)
-{
-    string_t result_str = string_lib_sb_get_string(sb, sb->allocator);
-    if (NULL == result_str.ptr) return STR_OOM;
-    int ret = string_lib_to_cstring(allocator, &result_str, cstring);
-    if (NULL == *cstring) return STR_OOM;
-    else return STR_SUCCESS;
-}
+
 
 
 #endif

@@ -6,15 +6,15 @@
 #include "core.h"
 
 
-static inline int fetch_chunk_from_source(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue);
-static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, char *scratchpad, size_t scratchpad_size);
+static int fetch_chunk_from_source(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, size_t chunk_index, fz_dyn_queue_t *download_queue);
+static int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chnk_checksum, char *scratchpad, size_t scratchpad_size);
 
 /* Single threaded download */
-static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst);
+static int download_chunks_st(context_t *context, fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst);
 
 
 /* The file retrieval step is a all-or-nothing step i.e., for all the file to be successfully retrieved all the chunks that make up the file must exist */ 
-extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, char *file_name){
+extern int fz_retrieve_file(context_t *context, fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, char *file_name){
     int result = 1;
     FILE *fh = NULL;
     FILE *dest_fh = NULL;
@@ -22,14 +22,8 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     struct cutpoint_map_s *cutpoint_map = NULL;
     struct missing_chunks_map_s *missing_chunks = NULL;
 
-    arena_allocator_t scratch_arena = arena_allocator_init(c_allocator, KB(64), DEFAULT_PAGE_SIZE);
-    if (NULL == scratch_arena.linkedlist) {
-        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
-        RETURN_DEFER(0);
-    }
-
     size_t temp_file_path_len = strlen(ctx->target_dir) + strlen("filezap__") + HEX_DIGIT_SIZE;
-    slice_t temp_file_path = arena_allocator_alloc(&scratch_arena, char, temp_file_path_len + 1);
+    slice_t temp_file_path = arena_allocator_alloc(&(context->temp_allocator), char, temp_file_path_len + 1);
     if (NULL == temp_file_path.ptr) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
@@ -40,19 +34,20 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         hmput(missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 1);
     }
+    fz_log(FZ_INFO, "missing_chunks after hmput loop: %p", (void *)missing_chunks);
 
     if (!fz_dyn_queue_init(&dq, RESERVED)){
         fz_log(FZ_ERROR, "Out of memory ah error!");
         RETURN_DEFER(0);
     }
-
-    if (!fz_fetch_file_st(ctx, mnfst, channel, &dq, &cutpoint_map, &missing_chunks, file_name)){
+    
+    if (!fz_fetch_file_st(context, ctx, mnfst, channel, &dq, &cutpoint_map, missing_chunks, file_name)){
         fz_log(FZ_ERROR, "Something went wrong trying to scavenge for chunks");
         RETURN_DEFER(0);
     }
     fz_log(FZ_INFO, "File from cutpoint successful");
 
-    if (!download_chunks_st(ctx, &dq, channel, mnfst)){
+    if (!download_chunks_st(context, ctx, &dq, channel, mnfst)){
         fz_log(FZ_ERROR, "Something went wrong while trying to download missing chunk");
         RETURN_DEFER(0);
     }
@@ -69,7 +64,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         if (max_chunk_size < mnfst->chunk_seq.chunk_size[i])
             max_chunk_size = mnfst->chunk_seq.chunk_size[i];
     }
-    slice_t buffer = arena_allocator_alloc(&scratch_arena, char, max_chunk_size);
+    slice_t buffer = arena_allocator_alloc(&(context->temp_allocator), char, max_chunk_size);
     if (NULL == buffer.ptr) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
@@ -79,7 +74,7 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
         memset(buffer.ptr, 0, buffer.len_in_bytes);
         size_t remaining = mnfst->file_size - mnfst->chunk_seq.cutpoint[i];
-        size_t min = remaining < mnfst->chunk_seq.chunk_size[i] ? remaining : mnfst->chunk_seq.chunk_size[i];
+        size_t min = (remaining < mnfst->chunk_seq.chunk_size[i])? remaining : mnfst->chunk_seq.chunk_size[i];
 
         snprintf(receiver_chnk_loc, RESERVED, "%s%016llx", ctx->metadata_loc, mnfst->chunk_seq.chunk_checksum[i]);
 
@@ -108,93 +103,91 @@ extern int fz_retrieve_file(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel
         if (1 == hmget(missing_chunks, key)) count++;
     }
     fz_log(FZ_INFO, "Here are the missing chunks size(%lu): ", count);
+    fz_log(FZ_INFO, "Size of missing_chunks_map_s (%lu): ", sizeof(struct missing_chunks_map_s));
 
     defer:
-        if (NULL != fh)             fclose(fh);
-        if (NULL != dest_fh)        fclose(dest_fh);
+        if (NULL != fh)      fclose(fh);
+        if (NULL != dest_fh) fclose(dest_fh);
         if (NULL != missing_chunks) hmfree(missing_chunks);
-        if (NULL != cutpoint_map)   shfree(cutpoint_map);
+        if (NULL != cutpoint_map) shfree(cutpoint_map);
         fz_dyn_queue_destroy(&dq);
-        arena_allocator_deinit(&scratch_arena);
         return result;
 }
 
-extern int fz_fetch_file_st(fz_ctx_t *ctx, fz_file_manifest_t *mnfst, fz_channel_t *channel, fz_dyn_queue_t *download_queue, struct cutpoint_map_s **cutpoint_map, struct missing_chunks_map_s **missing_chunks, char *dest_file_path){
+extern int fz_fetch_file_st(
+    context_t *context,
+    fz_ctx_t *ctx,
+    fz_file_manifest_t *mnfst,
+    fz_channel_t *channel,
+    fz_dyn_queue_t *download_queue,
+    struct cutpoint_map_s **cutpoint_map,
+    struct missing_chunks_map_s *missing_chunks,
+    char *dest_file_path
+){
     (void)channel;
     int result = 1;
-    char *scratchpad = NULL;
-    size_t scratchpad_size = RESERVED;
-    fz_chunk_seq_t *chunk_seq = NULL;
     fz_chunk_t *chunk_list = NULL;
     size_t chunk_size = 0;
+    
+    slice_t scratchpad = arena_allocator_alloc(&(context->temp_allocator), char, RESERVED);
+    if (NULL == scratchpad.ptr) RETURN_DEFER(0);
 
-    scratchpad = calloc(scratchpad_size, sizeof(char));
-    if (NULL == scratchpad) RETURN_DEFER(0);
+    slice_t chunk_seq = arena_allocator_alloc(&(context->temp_allocator), fz_chunk_seq_t, mnfst->chunk_seq.chunk_seq_len);
+    if (NULL == chunk_seq.ptr) RETURN_DEFER(0);
 
-    chunk_seq = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(fz_chunk_seq_t));
-    if (NULL == chunk_seq) RETURN_DEFER(0);
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        if (fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad, scratchpad_size)){
-            hmput(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 0);
+        if (fetch_chunk_from_blob_store(ctx, mnfst->chunk_seq.chunk_checksum[i], scratchpad.ptr, scratchpad.len_in_bytes)){
+            hmput(missing_chunks, mnfst->chunk_seq.chunk_checksum[i], 0);
         }
     }
-    
-    if (fz_query_required_chunk_list(ctx, mnfst, &chunk_list, &chunk_size, missing_chunks)){
-        if (!fz_fetch_chunks_from_file_cutpoint(ctx, mnfst, chunk_list, chunk_size, cutpoint_map, missing_chunks, dest_file_path)){
+
+    if (fz_query_required_chunk_list(context, ctx, mnfst, &chunk_list, &chunk_size, missing_chunks)){
+        if (!fz_fetch_chunks_from_file_cutpoint(context, ctx, mnfst, chunk_list, chunk_size, cutpoint_map, missing_chunks, dest_file_path)){
             fz_log(FZ_ERROR, "Error occurred while trying to fetch chunk from file(s)");
         }
     } else fz_log(FZ_ERROR, "Error occurred while querying for necessary chunk(s) from chunk table");
 
     for (size_t i = 0; i < mnfst->chunk_seq.chunk_seq_len; i++){
-        if (0 == hmget(*missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
+        if (0 == hmget(missing_chunks, mnfst->chunk_seq.chunk_checksum[i])) continue;
         else if (!fetch_chunk_from_source(ctx, mnfst->chunk_seq.chunk_checksum[i], i, download_queue)) RETURN_DEFER(0);
     }
     defer:
-        if (NULL != scratchpad) free(scratchpad);
-        if (NULL != chunk_seq) {free(chunk_seq); chunk_seq = NULL;}
-        if (NULL != chunk_list) {
-            for(size_t i = 0; i < chunk_size; i++){
-                if (NULL != chunk_list[i].src_file_path) {free((char *)chunk_list[i].src_file_path); chunk_list[i].src_file_path = NULL;}
-            }
-            free(chunk_list); chunk_list = NULL;
-        }
         return result;
 }
 
-
 extern int fz_fetch_chunks_from_file_cutpoint(
+    context_t *context,
     fz_ctx_t *ctx, 
     fz_file_manifest_t *mnfst, 
     fz_chunk_t *chunk_buffer, 
     size_t nchunk, 
     struct cutpoint_map_s **cutpoint_map,
-    struct missing_chunks_map_s **missing_chunks,
+    struct missing_chunks_map_s *missing_chunks,
     char *dest_file_path
 ){
     int result = 1;
-    char *buffer = NULL;
-    char *chunk_loc_buffer = NULL;
+    string_t chunk_loc_buffer = string_lib_init_capacity(&(context->temp_allocator), strlen(ctx->metadata_loc) + HEX_DIGIT_SIZE);
     /* This is wasteful, use a resizable arena allocator; create a map from file to the chunk cutpoint */
     for (size_t i = 0; i < nchunk; i++){
         fz_cutpoint_list_t *val_buffer = (fz_cutpoint_list_t *)shget(*cutpoint_map, chunk_buffer[i].src_file_path);
         if (NULL == val_buffer) {
-            val_buffer = calloc(1, sizeof(fz_cutpoint_list_t));
+            val_buffer = (fz_cutpoint_list_t *)arena_allocator_alloc_item(&(context->temp_allocator), fz_cutpoint_list_t);
             if (NULL == val_buffer) RETURN_DEFER(0);
-            val_buffer->buffer = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(fz_hex_digest_t));
-            val_buffer->chunk_size = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(size_t));
-            val_buffer->cutpoint = calloc(mnfst->chunk_seq.chunk_seq_len, sizeof(size_t));
-            if (NULL == val_buffer->buffer || NULL == val_buffer->chunk_size || NULL == val_buffer->cutpoint) {
-                if (NULL != val_buffer->buffer) {free(val_buffer->buffer); val_buffer->buffer= NULL;}
-                if (NULL != val_buffer->chunk_size) {free(val_buffer->chunk_size); val_buffer->chunk_size = NULL;}
-                if (NULL != val_buffer->cutpoint) {free(val_buffer->cutpoint); val_buffer->cutpoint = NULL;}
-                free(val_buffer); RETURN_DEFER(0);
-            }
+            val_buffer->cutpoint_len = 0;
+            slice_t buffer_slice = arena_allocator_alloc(&(context->temp_allocator), fz_hex_digest_t, mnfst->chunk_seq.chunk_seq_len);
+            slice_t chunk_size_slice = arena_allocator_alloc(&(context->temp_allocator), size_t, mnfst->chunk_seq.chunk_seq_len);
+            slice_t cutpoint_slice = arena_allocator_alloc(&(context->temp_allocator), size_t, mnfst->chunk_seq.chunk_seq_len);
+            if (NULL == buffer_slice.ptr || NULL == chunk_size_slice.ptr || NULL == cutpoint_slice.ptr) RETURN_DEFER(0);
+
+            val_buffer->buffer = buffer_slice.ptr;
+            val_buffer->chunk_size = chunk_size_slice.ptr;
+            val_buffer->cutpoint = cutpoint_slice.ptr;
         }
         if (val_buffer->cutpoint_len >= mnfst->chunk_seq.chunk_seq_len) continue;
         val_buffer->buffer[val_buffer->cutpoint_len] = chunk_buffer[i].chunk_checksum;
         val_buffer->chunk_size[val_buffer->cutpoint_len] = chunk_buffer[i].chunk_size;
         val_buffer->cutpoint[val_buffer->cutpoint_len] = chunk_buffer[i].cutpoint;
-        hmput(*missing_chunks, chunk_buffer[i].chunk_checksum, 1);
+        hmput(missing_chunks, chunk_buffer[i].chunk_checksum, 1);
         val_buffer->cutpoint_len++;
 
         shput(*cutpoint_map, chunk_buffer[i].src_file_path, val_buffer);
@@ -204,46 +197,51 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     fz_hex_digest_t digest = 0;
     char temp[HEX_DIGIT_SIZE] = {0};
 
-    chunk_loc_buffer = (char *)calloc(strlen(ctx->metadata_loc) + HEX_DIGIT_SIZE, sizeof(char));
-    if (NULL == chunk_loc_buffer) RETURN_DEFER(0);
-    strncat(chunk_loc_buffer, ctx->metadata_loc, sizeof(ctx->metadata_loc));
+    int ret = string_lib_append_strlit(&(context->temp_allocator), &chunk_loc_buffer, ctx->metadata_loc);
+    if (0 != ret) RETURN_DEFER(0);
+
+    // Precompute buffer allocation
+    for (size_t i = 0; i < shlenu(*cutpoint_map); i++){
+        fz_cutpoint_list_t *val_buffer = (*cutpoint_map)[i].value;
+        for (size_t j = 0; j < val_buffer->cutpoint_len; j++){;
+            if (max_alloc < val_buffer->chunk_size[j]) max_alloc = val_buffer->chunk_size[j];
+        }
+    }
+    slice_t buffer = arena_allocator_alloc(&(context->temp_allocator), char, max_alloc);
+    if (NULL == buffer.ptr) RETURN_DEFER(0);
+
+    slice_t temp_loc_slice = arena_allocator_alloc(&(context->temp_allocator), char, strlen(ctx->metadata_loc) + HEX_DIGIT_SIZE + 1);
+    if (NULL == temp_loc_slice.ptr) RETURN_DEFER(0);
 
     for (size_t i = 0; i < shlenu(*cutpoint_map); i++){
         char *scvg_file_path = (*cutpoint_map)[i].key;
         fz_cutpoint_list_t *val_buffer = (*cutpoint_map)[i].value;
-        // fz_log(FZ_INFO, "Open file `%s`", scvg_file_path);
         FILE *fh = fopen(scvg_file_path, "rb");
         if (NULL == fh) continue; /* If it fails to open the file move to next file */
         for (size_t j = 0; j < val_buffer->cutpoint_len; j++){
             if (fseek(fh, val_buffer->cutpoint[j], SEEK_SET) < 0) RETURN_DEFER(0);
-            if (max_alloc < val_buffer->chunk_size[j]){
-                buffer = realloc(buffer, val_buffer->chunk_size[j]);
-                if (NULL == buffer) RETURN_DEFER(0);
-                max_alloc = val_buffer->chunk_size[j];
-            }
 
-            memset(buffer, 0, max_alloc);
-            fread(buffer, 1, val_buffer->chunk_size[j], fh);
+            memset(buffer.ptr, 0, max_alloc);
+            fread(buffer.ptr, 1, val_buffer->chunk_size[j], fh);
             size_t min = val_buffer->chunk_size[j];
-            xxhash_hexdigest(buffer, val_buffer->chunk_size[j], &digest);
+            xxhash_hexdigest(buffer.ptr, val_buffer->chunk_size[j], &digest);
             if (digest == val_buffer->buffer[j]){
-                snprintf(temp, 17, "%016llx", digest);
-                memcpy(&chunk_loc_buffer[strlen(ctx->metadata_loc)], temp, 17);
-                // fz_log(FZ_INFO, "Chunk location: %s", chunk_loc_buffer);
-                FILE *d_fh = fopen(chunk_loc_buffer, "wb");
+                snprintf(temp, HEX_DIGIT_SIZE, "%016llx", digest);
+                int ret = string_lib_append_strlit(&(context->temp_allocator), &chunk_loc_buffer, temp);
+                if (0 != ret) RETURN_DEFER(0);
+                slice_t loc_slice = string_lib_cstring_in_slice(&chunk_loc_buffer, &temp_loc_slice);
+                FILE *d_fh = fopen(loc_slice.ptr, "wb");
                 if (NULL == d_fh) RETURN_DEFER(0);
-                fwrite(buffer, 1, min, d_fh);
+                fwrite(buffer.ptr, 1, min, d_fh);
                 fclose(d_fh);
-                hmput(*missing_chunks, digest, 0);
+                hmput(missing_chunks, digest, 0);
+                chunk_loc_buffer = string_lib_shrink_len(&chunk_loc_buffer, HEX_DIGIT_SIZE);
             }
         }
-        // fz_log(FZ_INFO, "Close file `%s`", scvg_file_path);
         snprintf(temp, HEX_DIGIT_SIZE, "%016llx", digest);
         fclose(fh);
     }
     defer:
-        if (NULL != buffer) free(buffer);
-        if (NULL != chunk_loc_buffer) free(chunk_loc_buffer);
         return result;
 }
 
@@ -293,18 +291,14 @@ static inline int fetch_chunk_from_blob_store(fz_ctx_t *ctx, fz_hex_digest_t chn
 }
 
 
-extern int fz_serialize_response(fz_chunk_response_t *response, char **json, size_t *json_size){
+extern int fz_serialize_response(context_t *context, fz_chunk_response_t *response, string_t *json_str){
     int result = 1;
-    char *buffer = NULL;
+    char temp[XSMALL_RESERVED] = {0};
 
-    buffer = calloc(XSMALL_RESERVED, sizeof(char));
-    if (NULL == buffer) RETURN_DEFER(0);
-
-    snprintf(buffer, XSMALL_RESERVED, "{\"chunk_checksum\":\"%016llx\",\"chunk_index\":%lu}", response->checksum, response->chunk_index);
-    *json = buffer;
-    *json_size = XSMALL_RESERVED;
+    snprintf(temp, XSMALL_RESERVED, "{\"chunk_checksum\":\"%016llx\",\"chunk_index\":%lu}", response->checksum, response->chunk_index);
+    int ret = string_lib_append_strlit(&(context->temp_allocator), json_str, temp);
+    if (0 != ret) RETURN_DEFER(0);
     defer:
-        if (!result) free(buffer);
         return result;
 }
 
@@ -332,66 +326,84 @@ extern int fz_deserialize_response(char *json, fz_chunk_response_t *response){
         } 
     }
     defer:
-        if (!root) free(root);
+        if (NULL != root) free(root);
         return result;
 }
 
 
-static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst){
+static int download_chunks_st(context_t *context, fz_ctx_t *ctx, fz_dyn_queue_t *download_queue, fz_channel_t *channel, fz_file_manifest_t *mnfst){
     int result = 1;
-    char *json = NULL;
-    size_t content_size = 0;
     char number_as_str[XXSMALL_RESERVED] = {0};
-    char *content_buffer = NULL;
     FILE *chnk_fh = NULL;
-    char *scratchpad = NULL;
-    size_t scratchpad_size = LARGE_RESERVED;
     size_t chunk_max_alloc = 0;
     size_t count = 0;
 
-    scratchpad = calloc(scratchpad_size, sizeof(char));
-    if (NULL == scratchpad) RETURN_DEFER(0);
+    slice_t scratchpad = arena_allocator_alloc(&(context->temp_allocator), char, LARGE_RESERVED);
+    if (NULL == scratchpad.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
+    fz_log(FZ_INFO, "chunk max is: %zu, queue_size: %zu!", chunk_max_alloc, download_queue->rear);
+
+    fz_chunk_response_t *res = (fz_chunk_response_t *)download_queue->buffer;
+    for (size_t i = 0; i < download_queue->rear; i++){
+        if (chunk_max_alloc < mnfst->chunk_seq.chunk_size[res[i].chunk_index]) 
+            chunk_max_alloc = mnfst->chunk_seq.chunk_size[res[i].chunk_index];
+    }
+    fz_log(FZ_INFO, "chunk max is: %zu?", chunk_max_alloc);
+    slice_t content_buffer = arena_allocator_alloc(&(context->temp_allocator), char, chunk_max_alloc);
+    if (NULL == content_buffer.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    string_t json_str = string_lib_init_capacity(&(context->temp_allocator), XSMALL_RESERVED);
+    slice_t str_slice = arena_allocator_alloc(&(context->temp_allocator), char, XSMALL_RESERVED + 1);
+    if (NULL == json_str.ptr || NULL == str_slice.ptr){
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+         RETURN_DEFER(0);
+    }
     while(!fz_dyn_queue_empty(download_queue)){
         do {
             char number_as_str[XXSMALL_RESERVED] = {0};
             snprintf(number_as_str, XXSMALL_RESERVED, "%lu", 0lu);
             if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)){
-                fz_log(FZ_ERROR, "Something went wrong: %s", json);
+                fz_log(FZ_ERROR, "Something went wrong");
                 RETURN_DEFER(0);
             }
         } while(0);
         fz_chunk_response_t val = {0};
         if (fz_dyn_dequeue(download_queue, &val)){
-            if (!fz_serialize_response(&val, &json, &content_size)){
+            memset(str_slice.ptr, 0, str_slice.len_in_bytes);
+            if (!fz_serialize_response(context, &val, &json_str)){
                 fz_log(FZ_ERROR, "Something wrong trying to serialize response");
                 RETURN_DEFER(0);
             }
-            if (0 == content_size) RETURN_DEFER(0);
-            snprintf(number_as_str, XXSMALL_RESERVED, "%lu", content_size);
+            if (0 == json_str.len) {
+                fz_log(FZ_ERROR, "JSON string");
+                RETURN_DEFER(0);
+            }
+            slice_t temp_slice = string_lib_cstring_in_slice(&json_str, &str_slice);
+            snprintf(number_as_str, XXSMALL_RESERVED, "%lu", temp_slice.len_in_bytes);
             if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)){
                 fz_log(FZ_ERROR, "Something wrong trying to writing the response");
                 RETURN_DEFER(0);
             }
-            if (!fz_channel_write_response(channel, json, content_size)) {
-                fz_log(FZ_ERROR, "Something went wrong: %s", json);
+            if (!fz_channel_write_response(channel, temp_slice.ptr, strlen(temp_slice.ptr))) {
+                fz_log(FZ_ERROR, "Something went wrong: %s", temp_slice.ptr);
                 RETURN_DEFER(0);
             }
 
             size_t chunk_size = mnfst->chunk_seq.chunk_size[val.chunk_index];
-            if (chunk_max_alloc < chunk_size){
-                content_buffer = realloc(content_buffer, chunk_size);
-                if (NULL == content_buffer) RETURN_DEFER(0);
-                chunk_max_alloc = chunk_size;
-            }
 
-            if (!fz_channel_read_request(channel, content_buffer, chunk_size, scratchpad, scratchpad_size)) RETURN_DEFER(0);
+            if (!fz_channel_read_request(channel, content_buffer.ptr, chunk_size, scratchpad.ptr, scratchpad.len_in_bytes)) RETURN_DEFER(0);
             char temp_loc[XXSMALL_RESERVED] = {0};
             snprintf(temp_loc, XXSMALL_RESERVED, "%s%016llx", ctx->metadata_loc, val.checksum);
             chnk_fh = fopen(temp_loc, "wb");
             if (NULL == chnk_fh) RETURN_DEFER(0);
-            fwrite(content_buffer, 1, chunk_size, chnk_fh);
+            fwrite(content_buffer.ptr, 1, chunk_size, chnk_fh);
             fclose(chnk_fh);
+            json_str = string_lib_shrink_len(&json_str, 0); //reset string
         } else {
             assert(0&&"Unreachable!");
         }
@@ -399,7 +411,5 @@ static inline int download_chunks_st(fz_ctx_t *ctx, fz_dyn_queue_t *download_que
     }
     fz_log(FZ_INFO, "Downloaded %lu missing chunk(s) from sender", count);
     defer:
-        if (NULL == json) free(json);
-        if (NULL != scratchpad) free(scratchpad);
         return result;
 }

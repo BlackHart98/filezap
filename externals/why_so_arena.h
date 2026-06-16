@@ -80,6 +80,10 @@ typedef struct arena_allocator_t {
     arena_linked_node_t *tail_linkedlist;
 } arena_allocator_t;
 
+typedef struct context_t {
+    arena_allocator_t temp_allocator;
+    arena_allocator_t allocator;
+} context_t;
 
 ARENA_LOCAL slice_t
 make_slice(void *object, size_t len_in_bytes);
@@ -160,6 +164,12 @@ arena_allocator_resize_aligned(arena_allocator_t *arena_allocator, slice_t alloc
 
 ARENA_LOCAL slice_t
 arena_allocator_dup_aligned(arena_allocator_t *arena_allocator, slice_t input_slice, size_t alignment_);
+
+ARENA_LOCAL context_t 
+context_init(size_t allocator_capacity, size_t temp_allocator_capacity);
+
+ARENA_LOCAL void 
+context_deinit(context_t *ctx);
 
 
 
@@ -415,6 +425,26 @@ slice_equal(const slice_t *lhs, const slice_t *rhs)
     if (lhs->len_in_bytes != rhs->len_in_bytes) return 0;
     if (0 == memcmp(lhs->ptr, rhs->ptr, lhs->len_in_bytes)) return 1;
     return 0;
+}
+
+
+
+
+// Context allocator
+context_t 
+context_init(size_t allocator_capacity, size_t temp_allocator_capacity)
+{
+    return (context_t){
+        .allocator = arena_allocator_init(c_allocator, allocator_capacity, DEFAULT_PAGE_SIZE),
+        .temp_allocator = arena_allocator_init(c_allocator, temp_allocator_capacity, DEFAULT_PAGE_SIZE),
+    };
+}
+
+void 
+context_deinit(context_t *ctx)
+{
+    arena_allocator_deinit(&(ctx->allocator));
+    arena_allocator_deinit(&(ctx->temp_allocator));
 }
 #endif
 

@@ -17,10 +17,10 @@ int main(int argc, char *argv[]){
     int result = 0;
     fz_channel_t recv_channel = {0};
 
-    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
-    if (NULL == gpa.linkedlist) {
-        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
-        RETURN_DEFER(0);
+    context_t context = context_init(MB(1), KB(512));
+    if (NULL == context.allocator.linkedlist || NULL == context.temp_allocator.linkedlist){
+        fz_log(FZ_ERROR, "Failed to initialize arena context in %s", __func__);
+        RETURN_DEFER(1);
     }
 
     if (!fz_ctx_init(&recv_fz, FZ_FIXED_SIZED_CHUNK, "dtmp/", "examples/dest/", "filezap.db", NULL, NULL)){
@@ -29,12 +29,12 @@ int main(int argc, char *argv[]){
     }
     fz_log(FZ_INFO, "Receiver context initialized successfully");
 
-    if (!fz_channel_init_v2(&gpa, &recv_channel, FZ_FIFO, FZ_RECEIVER_MODE, NULL)){
+    if (!fz_channel_init_v2(&(context.allocator), &recv_channel, FZ_FIFO, FZ_RECEIVER_MODE, NULL)){
         fz_log(FZ_ERROR, "%s: Failed to initialize file zap reciever channel", __func__);
         RETURN_DEFER(1);
     }
     fz_log(FZ_INFO, "Receiver channel initialized successfully");
-    if (!fz_receive_file(&recv_fz, &recv_channel)){
+    if (!fz_receive_file(&context, &recv_fz, &recv_channel)){
         fz_log(FZ_ERROR, "%s: Error occurred while receiving file", __func__);
         RETURN_DEFER(1);
     }
@@ -44,6 +44,7 @@ int main(int argc, char *argv[]){
     defer:
         fz_channel_destroy(&recv_channel);
         fz_ctx_destroy(&recv_fz);
-        arena_allocator_deinit(&gpa);
+        // arena_allocator_deinit(&gpa);
+        context_deinit(&context);
         return result;
 }

@@ -22,10 +22,11 @@ int main(int argc, char *argv[]){
     fz_channel_t snd_channel = {0};
     fz_channel_t recv_channel = {0};
     int result = 0;
-    arena_allocator_t gpa = arena_allocator_init(c_allocator, MB(1), KB(2));
-    if (NULL == gpa.linkedlist) {
-        fz_log(FZ_ERROR, "Failed to initialize arena allocator in %s", __func__);
-        RETURN_DEFER(0);
+
+    context_t context = context_init(MB(1), KB(512));
+    if (NULL == context.allocator.linkedlist || NULL == context.temp_allocator.linkedlist){
+        fz_log(FZ_ERROR, "Failed to initialize arena context in %s", __func__);
+        RETURN_DEFER(1);
     }
 
     pid_t child_process = fork(); 
@@ -38,12 +39,12 @@ int main(int argc, char *argv[]){
             RETURN_DEFER(1);
         }
         fz_log(FZ_INFO, "Sender context initialized successfully");
-        if (!fz_channel_init_v2(&gpa, &snd_channel, FZ_FIFO, FZ_SENDER_MODE, NULL)){
+        if (!fz_channel_init_v2(&(context.allocator), &snd_channel, FZ_FIFO, FZ_SENDER_MODE, NULL)){
             fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender channel", __func__);
             RETURN_DEFER(1);
         }
         fz_log(FZ_INFO, "Sender context channel successfully");
-        if (!fz_send_file(&snd_fz, &snd_channel, input_file)){
+        if (!fz_send_file(&context, &snd_fz, &snd_channel, input_file)){
             fz_log(FZ_ERROR, "%s: Error occurred while sending file", __func__);
             RETURN_DEFER(1);
         }
@@ -54,12 +55,12 @@ int main(int argc, char *argv[]){
             RETURN_DEFER(1);
         }
         fz_log(FZ_INFO, "Receiver context initialized successfully");
-        if (!fz_channel_init_v2(&gpa, &recv_channel, FZ_FIFO, FZ_RECEIVER_MODE, NULL)){
+        if (!fz_channel_init_v2(&(context.allocator), &recv_channel, FZ_FIFO, FZ_RECEIVER_MODE, NULL)){
             fz_log(FZ_ERROR, "%s: Failed to initialize file zap sender channel", __func__);
             RETURN_DEFER(1);
         }
         fz_log(FZ_INFO, "Receiver context channel successfully");
-        if (!fz_receive_file(&recv_fz, &recv_channel)){
+        if (!fz_receive_file(&context, &recv_fz, &recv_channel)){
             fz_log(FZ_ERROR, "%s: Error occurred while receiving file", __func__);
             RETURN_DEFER(1);
         }
@@ -70,7 +71,7 @@ int main(int argc, char *argv[]){
     defer:
         fz_ctx_destroy(&snd_fz); fz_channel_destroy(&snd_channel);
         fz_ctx_destroy(&recv_fz); fz_channel_destroy(&recv_channel);
-        arena_allocator_deinit(&gpa);
+        context_deinit(&context);
         return result;
 
 }
