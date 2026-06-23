@@ -103,7 +103,6 @@ extern int fz_retrieve_file(context_t *context, fz_ctx_t *ctx, fz_file_manifest_
         if (1 == hmget(missing_chunks, key)) count++;
     }
     fz_log(FZ_INFO, "Here are the missing chunks size(%lu): ", count);
-    fz_log(FZ_INFO, "Size of missing_chunks_map_s (%lu): ", sizeof(struct missing_chunks_map_s));
 
     defer:
         if (NULL != fh)      fclose(fh);
@@ -113,6 +112,7 @@ extern int fz_retrieve_file(context_t *context, fz_ctx_t *ctx, fz_file_manifest_
         fz_dyn_queue_destroy(&dq);
         return result;
 }
+
 
 extern int fz_fetch_file_st(
     context_t *context,
@@ -177,7 +177,10 @@ extern int fz_fetch_chunks_from_file_cutpoint(
             slice_t buffer_slice = arena_allocator_alloc(&(context->temp_allocator), fz_hex_digest_t, mnfst->chunk_seq.chunk_seq_len);
             slice_t chunk_size_slice = arena_allocator_alloc(&(context->temp_allocator), size_t, mnfst->chunk_seq.chunk_seq_len);
             slice_t cutpoint_slice = arena_allocator_alloc(&(context->temp_allocator), size_t, mnfst->chunk_seq.chunk_seq_len);
-            if (NULL == buffer_slice.ptr || NULL == chunk_size_slice.ptr || NULL == cutpoint_slice.ptr) RETURN_DEFER(0);
+            if (NULL == buffer_slice.ptr || NULL == chunk_size_slice.ptr || NULL == cutpoint_slice.ptr) {
+                fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+                RETURN_DEFER(0);
+            }
 
             val_buffer->buffer = buffer_slice.ptr;
             val_buffer->chunk_size = chunk_size_slice.ptr;
@@ -198,7 +201,11 @@ extern int fz_fetch_chunks_from_file_cutpoint(
     char temp[HEX_DIGIT_SIZE] = {0};
 
     int ret = string_lib_append_strlit(&(context->temp_allocator), &chunk_loc_buffer, ctx->metadata_loc);
-    if (0 != ret) RETURN_DEFER(0);
+    if (0 != ret) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    size_t metadata_loc_strlen = chunk_loc_buffer.len;
 
     // Precompute buffer allocation
     for (size_t i = 0; i < shlenu(*cutpoint_map); i++){
@@ -208,10 +215,16 @@ extern int fz_fetch_chunks_from_file_cutpoint(
         }
     }
     slice_t buffer = arena_allocator_alloc(&(context->temp_allocator), char, max_alloc);
-    if (NULL == buffer.ptr) RETURN_DEFER(0);
+    if (NULL == buffer.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     slice_t temp_loc_slice = arena_allocator_alloc(&(context->temp_allocator), char, strlen(ctx->metadata_loc) + HEX_DIGIT_SIZE + 1);
-    if (NULL == temp_loc_slice.ptr) RETURN_DEFER(0);
+    if (NULL == temp_loc_slice.ptr) {
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
 
     for (size_t i = 0; i < shlenu(*cutpoint_map); i++){
         char *scvg_file_path = (*cutpoint_map)[i].key;
@@ -228,6 +241,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
             if (digest == val_buffer->buffer[j]){
                 snprintf(temp, HEX_DIGIT_SIZE, "%016llx", digest);
                 int ret = string_lib_append_strlit(&(context->temp_allocator), &chunk_loc_buffer, temp);
+                
                 if (0 != ret) RETURN_DEFER(0);
                 slice_t loc_slice = string_lib_cstring_in_slice(&chunk_loc_buffer, &temp_loc_slice);
                 FILE *d_fh = fopen(loc_slice.ptr, "wb");
@@ -235,7 +249,7 @@ extern int fz_fetch_chunks_from_file_cutpoint(
                 fwrite(buffer.ptr, 1, min, d_fh);
                 fclose(d_fh);
                 hmput(missing_chunks, digest, 0);
-                chunk_loc_buffer = string_lib_shrink_len(&chunk_loc_buffer, HEX_DIGIT_SIZE);
+                chunk_loc_buffer = string_lib_shrink_len(&chunk_loc_buffer, metadata_loc_strlen);
             }
         }
         snprintf(temp, HEX_DIGIT_SIZE, "%016llx", digest);
@@ -303,7 +317,7 @@ extern int fz_serialize_response(context_t *context, fz_chunk_response_t *respon
 }
 
 
-extern int fz_deserialize_response(char *json, fz_chunk_response_t *response){
+extern int fz_deserialize_response(arena_allocator_t *allocator, char *json, array_list_t *response_list){
     int result = 1;
     struct json_value_s* root = NULL;
     struct json_object_s* response_json = NULL;
@@ -311,19 +325,25 @@ extern int fz_deserialize_response(char *json, fz_chunk_response_t *response){
     root = json_parse(json, strlen(json));
     if (!root) RETURN_DEFER(0);
 
-    response_json = (struct json_object_s*)root->payload;
-    if (!response_json || !response_json->length) RETURN_DEFER(0);
-    struct json_object_element_s *elem = NULL;
-    for (size_t i = 0; i < response_json->length; i++){
-        elem = (0 == i)? response_json->start : elem->next;
-        if (NULL == elem) RETURN_DEFER(0);
-        if (0 == strcmp(elem->name->string, "chunk_checksum")){
-            struct json_number_s *val = (struct json_number_s *)elem->value->payload;
-            response->checksum = (fz_hex_digest_t)strtoull(val->number, NULL, 16);
-        } else if (0 == strcmp(elem->name->string, "chunk_index")){
-            struct json_number_s *val = (struct json_number_s *)elem->value->payload;
-            response->chunk_index = (size_t)strtoul(val->number, NULL, 10);
-        } 
+    struct json_array_s* array = (struct json_array_s*)root->payload;
+    struct json_array_element_s *entry = (struct json_array_element_s *)array->start;
+    for (size_t i = 0; i < array->length; i++){
+        fz_chunk_response_t response = {0};
+        response_json = (struct json_object_s*)entry->value->payload;
+        if (!response_json || !response_json->length) RETURN_DEFER(0);
+        struct json_object_element_s *elem = NULL;
+        for (size_t i = 0; i < response_json->length; i++){
+            elem = (0 == i)? response_json->start : elem->next;
+            if (0 == strcmp(elem->name->string, "chunk_checksum")){
+                struct json_number_s *val = (struct json_number_s *)elem->value->payload;
+                response.checksum = (fz_hex_digest_t)strtoull(val->number, NULL, 16);
+            } else if (0 == strcmp(elem->name->string, "chunk_index")){
+                struct json_number_s *val = (struct json_number_s *)elem->value->payload;
+                response.chunk_index = (size_t)strtoul(val->number, NULL, 10);
+            }
+        }
+        array_list_append_item_fn(allocator, response_list, (char *)&response);
+        entry = (struct json_array_element_s *)entry->next;
     }
     defer:
         if (NULL != root) free(root);
@@ -343,73 +363,121 @@ static int download_chunks_st(context_t *context, fz_ctx_t *ctx, fz_dyn_queue_t 
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
     }
-
-    fz_log(FZ_INFO, "chunk max is: %zu, queue_size: %zu!", chunk_max_alloc, download_queue->rear);
-
+    fz_log(FZ_INFO, "download len: %zu", download_queue->rear);
+    if (0 == download_queue->rear) {
+        snprintf(number_as_str, XXSMALL_RESERVED, "%lu", 1LU);
+        if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)) {
+            fz_log(FZ_ERROR, "Fatal error: Failed to read control flag");
+            RETURN_DEFER(0);
+        }
+        fz_log(FZ_INFO, "No download required");
+        RETURN_DEFER(1);
+    } else {
+        snprintf(number_as_str, XXSMALL_RESERVED, "%lu", 0LU);
+        if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)) {
+            fz_log(FZ_ERROR, "Fatal error: Failed to read control flag");
+            RETURN_DEFER(0);
+        }
+    }
     fz_chunk_response_t *res = (fz_chunk_response_t *)download_queue->buffer;
     for (size_t i = 0; i < download_queue->rear; i++){
         if (chunk_max_alloc < mnfst->chunk_seq.chunk_size[res[i].chunk_index]) 
             chunk_max_alloc = mnfst->chunk_seq.chunk_size[res[i].chunk_index];
     }
-    fz_log(FZ_INFO, "chunk max is: %zu?", chunk_max_alloc);
+    fz_log(FZ_INFO, "chunk max is: %zu", chunk_max_alloc);
     slice_t content_buffer = arena_allocator_alloc(&(context->temp_allocator), char, chunk_max_alloc);
     if (NULL == content_buffer.ptr) {
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
         RETURN_DEFER(0);
     }
-    string_t json_str = string_lib_init_capacity(&(context->temp_allocator), XSMALL_RESERVED);
-    slice_t str_slice = arena_allocator_alloc(&(context->temp_allocator), char, XSMALL_RESERVED + 1);
-    if (NULL == json_str.ptr || NULL == str_slice.ptr){
+    string_t json_chunk_str = string_lib_init_capacity(&(context->temp_allocator), LARGE_RESERVED);
+    if (NULL == json_chunk_str.ptr){
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    // Serialize chunks
+    size_t i = 0;
+    for (; i < download_queue->rear - 1; i++){
+        fz_chunk_response_t val = download_queue->buffer[i];
+        if (!fz_serialize_response(context, &val, &json_chunk_str)){
+            fz_log(FZ_ERROR, "Something wrong trying to serialize response");
+            RETURN_DEFER(0);
+        }
+        if (0 == json_chunk_str.len) {
+            fz_log(FZ_ERROR, "Fatal error in JSON serializer");
+            RETURN_DEFER(0);
+        }
+        int ret = string_lib_append_strlit(&(context->temp_allocator), &json_chunk_str, ",");
+        if (0 != ret) RETURN_DEFER(0);
+    }
+    if (i < download_queue->rear) {
+        fz_chunk_response_t val = download_queue->buffer[i];
+        if (!fz_serialize_response(context, &val, &json_chunk_str)){
+            fz_log(FZ_ERROR, "Something wrong trying to serialize response");
+            RETURN_DEFER(0);
+        }
+        if (0 == json_chunk_str.len) {
+            fz_log(FZ_ERROR, "Fatal error in JSON serializer");
+            RETURN_DEFER(0);
+        }
+    }
+    
+    string_t json_str = string_lib_init_capacity(&(context->temp_allocator), LARGE_RESERVED);
+    if (NULL == json_str.ptr){
+        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+        RETURN_DEFER(0);
+    }
+    int ret = string_lib_append_strlit(&(context->temp_allocator), &json_str, "[");
+    if (0 != ret) RETURN_DEFER(0);
+
+    ret = string_lib_append_string(&(context->temp_allocator), &json_str, &json_chunk_str);
+    if (0 != ret) RETURN_DEFER(0);
+
+    ret = string_lib_append_strlit(&(context->temp_allocator), &json_str, "]");
+    if (0 != ret) RETURN_DEFER(0);
+
+    // string buffer
+    slice_t str_slice = arena_allocator_alloc(&(context->temp_allocator), char, json_str.len + 1);
+    if (NULL == str_slice.ptr){
         fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
          RETURN_DEFER(0);
     }
-    while(!fz_dyn_queue_empty(download_queue)){
-        do {
-            char number_as_str[XXSMALL_RESERVED] = {0};
-            snprintf(number_as_str, XXSMALL_RESERVED, "%lu", 0lu);
-            if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)){
-                fz_log(FZ_ERROR, "Something went wrong");
-                RETURN_DEFER(0);
-            }
-        } while(0);
-        fz_chunk_response_t val = {0};
-        if (fz_dyn_dequeue(download_queue, &val)){
-            memset(str_slice.ptr, 0, str_slice.len_in_bytes);
-            if (!fz_serialize_response(context, &val, &json_str)){
-                fz_log(FZ_ERROR, "Something wrong trying to serialize response");
-                RETURN_DEFER(0);
-            }
-            if (0 == json_str.len) {
-                fz_log(FZ_ERROR, "JSON string");
-                RETURN_DEFER(0);
-            }
-            slice_t temp_slice = string_lib_cstring_in_slice(&json_str, &str_slice);
-            snprintf(number_as_str, XXSMALL_RESERVED, "%lu", temp_slice.len_in_bytes);
-            if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)){
-                fz_log(FZ_ERROR, "Something wrong trying to writing the response");
-                RETURN_DEFER(0);
-            }
-            if (!fz_channel_write_response(channel, temp_slice.ptr, strlen(temp_slice.ptr))) {
-                fz_log(FZ_ERROR, "Something went wrong: %s", temp_slice.ptr);
-                RETURN_DEFER(0);
-            }
+    slice_t temp_slice = string_lib_cstring_in_slice(&json_str, &str_slice);
 
-            size_t chunk_size = mnfst->chunk_seq.chunk_size[val.chunk_index];
+    snprintf(number_as_str, XXSMALL_RESERVED, "%zu", temp_slice.len_in_bytes);
+    if (!fz_channel_write_response(channel, number_as_str, XXSMALL_RESERVED)){
+        fz_log(FZ_ERROR, "Something went wrong");
+        RETURN_DEFER(0);
+    }
 
-            if (!fz_channel_read_request(channel, content_buffer.ptr, chunk_size, scratchpad.ptr, scratchpad.len_in_bytes)) RETURN_DEFER(0);
-            char temp_loc[XXSMALL_RESERVED] = {0};
-            snprintf(temp_loc, XXSMALL_RESERVED, "%s%016llx", ctx->metadata_loc, val.checksum);
-            chnk_fh = fopen(temp_loc, "wb");
-            if (NULL == chnk_fh) RETURN_DEFER(0);
-            fwrite(content_buffer.ptr, 1, chunk_size, chnk_fh);
-            fclose(chnk_fh);
-            json_str = string_lib_shrink_len(&json_str, 0); //reset string
-        } else {
-            assert(0&&"Unreachable!");
+    if (!fz_channel_write_response(channel, temp_slice.ptr, temp_slice.len_in_bytes)){
+        fz_log(FZ_ERROR, "Something went wrong");
+        RETURN_DEFER(0);
+    }
+
+    size_t total_missing_chunks = download_queue->rear;
+    for (size_t i = 0; i < total_missing_chunks; i++){
+        if (!fz_channel_read_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
+            fz_log(FZ_ERROR, "Failed to send chunk index to source");
+            RETURN_DEFER(0);
         }
+        size_t chunk_index = strtoul(number_as_str, NULL, 10);
+        size_t chunk_size = mnfst->chunk_seq.chunk_size[chunk_index];
+
+        if (!fz_channel_read_request(channel, content_buffer.ptr, chunk_size, scratchpad.ptr, scratchpad.len_in_bytes)){ 
+            RETURN_DEFER(0);
+        }
+        char temp_loc[XXSMALL_RESERVED] = {0};
+        snprintf(temp_loc, XXSMALL_RESERVED, "%s%016llx", ctx->metadata_loc, mnfst->chunk_seq.chunk_checksum[chunk_index]);
+        chnk_fh = fopen(temp_loc, "wb");
+        if (NULL == chnk_fh) RETURN_DEFER(0);
+        fwrite(content_buffer.ptr, 1, chunk_size, chnk_fh);
+        fclose(chnk_fh);
         count++;
     }
+
     fz_log(FZ_INFO, "Downloaded %lu missing chunk(s) from sender", count);
     defer:
         return result;
 }
+

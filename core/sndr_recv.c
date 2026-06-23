@@ -11,6 +11,10 @@ extern int fz_send_file(context_t *context, fz_ctx_t *ctx, fz_channel_t *channel
 {
     int result = 1;
     fz_file_manifest_t mnfst = {0};
+    size_t chunk_max_alloc = 0;
+    slice_t content_buf = {0};
+    char number_as_str[XXSMALL_RESERVED] = {0};
+    char flag_str[XXSMALL_RESERVED] = {0};
 
     /* Owned by fz_serialize_manifest (malloc internally) — cannot arena-ify
      * without changing that function's signature.                           */
@@ -38,7 +42,6 @@ extern int fz_send_file(context_t *context, fz_ctx_t *ctx, fz_channel_t *channel
         RETURN_DEFER(0);
     }
 
-    char number_as_str[XXSMALL_RESERVED] = {0};
     snprintf(number_as_str, XXSMALL_RESERVED, "%lu", content_size);
     fz_log(FZ_INFO, "sender: content size: %lukb", content_size / 1024);
     fz_log(FZ_INFO, "Number as string: %s, Actual number: %lu", number_as_str, content_size);
@@ -47,86 +50,85 @@ extern int fz_send_file(context_t *context, fz_ctx_t *ctx, fz_channel_t *channel
         fz_log(FZ_ERROR, "Failed to send content size to destination");
         RETURN_DEFER(0);
     }
+    // fz_log(FZ_INFO, "Number: %s ... %zu", number_as_str, content_size);
     if (!fz_channel_write_request(channel, manifest_buf, content_size, scratchpad.ptr, scratchpad.len_in_bytes)) {
         fz_log(FZ_ERROR, "Failed to send serialized manifest to destination");
         RETURN_DEFER(0);
     }
-
-    /* Response and chunk content buffers — grown on demand via arena resize. */
-    slice_t response_buf = arena_allocator_alloc(&(context->temp_allocator), char, XSMALL_RESERVED);
-    if (NULL == response_buf.ptr) {
-        fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
-        RETURN_DEFER(0);
-    }
-
+    // fz_log(FZ_INFO, "- Number: %s ... %zu", number_as_str, content_size);
     /* content_buf starts empty; sized on first chunk response. */
-    slice_t content_buf = (slice_t){0};
-
     FILE *src_fh = fopen(src_file_path, "rb");
     if (NULL == src_fh) {
         fz_log(FZ_ERROR, "Failed to open source file `%s` for read", src_file_path);
         RETURN_DEFER(0);
     }
-    size_t flag = 0;
-    while (1) {
-        /* Read control flag. */
-        do {
-            char flag_str[XXSMALL_RESERVED] = {0};
-            if (!fz_channel_read_response(channel, flag_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
-                fz_log(FZ_ERROR, "Failed to read control flag");
+
+    // Check any download will be needed
+    if (!fz_channel_read_response(channel, flag_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
+        fz_log(FZ_ERROR, "Failed to read control flag");
+        RETURN_DEFER(0);
+    }
+    size_t no_download_flag = strtoul(flag_str, NULL, 10);
+    if (1 == no_download_flag) {
+        fz_log(FZ_INFO, "No need for download");
+        RETURN_DEFER(1);
+    }
+
+    /* Read chunk request size. */
+    if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
+        RETURN_DEFER(0);
+    }
+    content_size = strtoul(number_as_str, NULL, 10);
+    fz_log(FZ_INFO, "Content size: %zu", content_size);
+    if (0 < content_size && MAX_MANIFEST_SIZE > content_size){
+        // fz_log(FZ_INFO, "Got into the conditional block");
+        slice_t str_slice = arena_allocator_alloc(&(context->temp_allocator), char, content_size);
+        if (NULL == str_slice.ptr) {
+            fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+            RETURN_DEFER(0);
+        }
+        if (!fz_channel_read_response(channel, str_slice.ptr, str_slice.len_in_bytes, scratchpad.ptr, scratchpad.len_in_bytes)) {
+            RETURN_DEFER(0);
+        }
+        // fz_log(FZ_INFO, "Recieved missing chunks: %s", str_slice.ptr);
+        array_list_t missing_chunk_list = array_list_init_capacity(&(context->temp_allocator), fz_chunk_response_t, XSMALL_RESERVED);
+        if (!fz_deserialize_response(&(context->temp_allocator), str_slice.ptr, &missing_chunk_list)) RETURN_DEFER(0);
+        fz_chunk_response_t *ptr = (fz_chunk_response_t *)missing_chunk_list.ptr;
+
+        // Precompute the largest reserve allocation
+        for (size_t i = 0; i < missing_chunk_list.len; i++){
+            if (chunk_max_alloc < mnfst.chunk_seq.chunk_size[i]) chunk_max_alloc = mnfst.chunk_seq.chunk_size[i];
+        }
+        content_buf = arena_allocator_alloc(&(context->temp_allocator), char, chunk_max_alloc);
+        if (NULL == content_buf.ptr){
+            fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+            RETURN_DEFER(0);
+        }
+        for (size_t i = 0; i < missing_chunk_list.len; i++){
+            size_t chunk_index = ptr[i].chunk_index;
+            size_t cutpoint = mnfst.chunk_seq.cutpoint[chunk_index];
+            size_t chunk_size = mnfst.chunk_seq.chunk_size[chunk_index];
+
+            snprintf(number_as_str, XXSMALL_RESERVED, "%lu", chunk_index);
+            if (!fz_channel_write_request(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
                 RETURN_DEFER(0);
             }
-            flag = strtoul(flag_str, NULL, 10);
-        } while (0);
-        if (flag) break;
+            if (fseek(src_fh, (long)cutpoint, SEEK_SET) < 0) RETURN_DEFER(0);
 
-        /* Read chunk request size. */
-        if (!fz_channel_read_response(channel, number_as_str, XXSMALL_RESERVED, scratchpad.ptr, scratchpad.len_in_bytes)) {
-            RETURN_DEFER(0);
-        }
-        content_size = strtoul(number_as_str, NULL, 10);
-        if (0 == content_size || MAX_MANIFEST_SIZE < content_size) {
-            fz_log(FZ_ERROR, "Chunk content_size violates 0 < size < MAX_MANIFEST_SIZE (64MB): %lu", content_size / (KB(1) * KB(1)));
-            RETURN_DEFER(0);
-        }
-
-        if (!fz_channel_read_response(
-            channel, 
-            response_buf.ptr, 
-            response_buf.len_in_bytes, 
-            scratchpad.ptr, scratchpad.len_in_bytes)
-        ) {
-            RETURN_DEFER(0);
-        }
-
-        fz_chunk_response_t val = {0};
-        if (!fz_deserialize_response(response_buf.ptr, &val)) RETURN_DEFER(0);
-
-        size_t chunk_size = mnfst.chunk_seq.chunk_size[val.chunk_index];
-
-        /* Grow chunk content buffer if needed. */
-        if (content_buf.len_in_bytes < chunk_size) {
-            /* arena_allocator_resize requires a non-NULL slice; bootstrap on first use. */
-            if (NULL == content_buf.ptr) {
-                content_buf = arena_allocator_alloc(&(context->temp_allocator), char, chunk_size);
-            } else {
-                content_buf = arena_allocator_resize(&(context->temp_allocator), char, content_buf, chunk_size);
+            size_t nread = fread(content_buf.ptr, 1, chunk_size, src_fh);   /* read exactly chunk_size, not chunk_max_alloc */
+            if (nread != chunk_size) {
+                fz_log(FZ_ERROR, "Short read on chunk %zu: expected %zu, got %zu", chunk_index, chunk_size, nread);
+                RETURN_DEFER(0);
             }
-            if (NULL == content_buf.ptr) {
-                fz_log(FZ_ERROR, "Out of memory error in %s", __func__);
+            if (!fz_channel_write_request(channel, content_buf.ptr, chunk_size, scratchpad.ptr, scratchpad.len_in_bytes)) {
+                fz_log(FZ_ERROR, "Failed to send chunk to destination");
                 RETURN_DEFER(0);
             }
         }
-        memset(content_buf.ptr, 0, content_buf.len_in_bytes);
-
-        size_t cutpoint = mnfst.chunk_seq.cutpoint[val.chunk_index];
-        if (fseek(src_fh, (long)cutpoint, SEEK_SET) < 0) RETURN_DEFER(0);
-        fread(content_buf.ptr, 1, chunk_size, src_fh);
-
-        if (!fz_channel_write_request(channel, content_buf.ptr, chunk_size, scratchpad.ptr, scratchpad.len_in_bytes)) {
-            fz_log(FZ_ERROR, "Failed to send chunk to destination");
-            RETURN_DEFER(0);
-        }
+    }
+    if (MAX_MANIFEST_SIZE < content_size) {
+        fz_log(FZ_ERROR, "Manifest content_size violates size < MAX_MANIFEST_SIZE (64MB): %lumb", content_size / (KB(1) * KB(1)));
+        RETURN_DEFER(0);
     }
     fz_log(FZ_INFO, "Closing connection");
 
@@ -188,8 +190,6 @@ extern int fz_receive_file(context_t *context, fz_ctx_t *ctx, fz_channel_t *chan
         /* Notify sender that the files have been sent successfully 
         Todo: have different code to indicate the result file transfer i.e., FZ_TRANSFER_SUCCESS = 1 etc.
         This will improve visibilty of the file transfer process to the sender */
-        flag = 1;
-        SEND_CONN_FLAG(flag); /* Non-zero indicates close connection: This is not a very good idea */
         fz_file_manifest_destroy(&mnfst);
         arena_allocator_reset(&(context->temp_allocator));
         return result;
@@ -358,18 +358,22 @@ extern int fz_channel_write_request(fz_channel_t *channel, char *buffer, size_t 
     if (FZ_FIFO & channel->type){
         struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)channel->channel_desc;
         pthread_mutex_lock(&(c_ptr->mtx));
-        request_d =  c_ptr->request_d;
-        for (size_t i = 0; i < data_size; i += LARGE_RESERVED){
-            size_t min = LARGE_RESERVED > (data_size - i)? (data_size - i) : LARGE_RESERVED;
-            if (-1 == write(request_d, buffer + i, min)){
-                if (NULL == buffer) fz_log(FZ_INFO, "Prepare...");
-                fz_log(FZ_INFO, "I think it's a maxxed out issue: %lu", i);
+        request_d = c_ptr->request_d;
+
+        size_t total_written = 0;
+        while (total_written < data_size) {
+            size_t remaining = data_size - total_written;
+            size_t want = LARGE_RESERVED > remaining ? remaining : LARGE_RESERVED;
+            ssize_t n = write(request_d, buffer + total_written, want);
+            if (n < 0) {
+                fz_log(FZ_ERROR, "write() failed at offset %zu/%zu, errno=%d (%s)", total_written, data_size, errno, strerror(errno));
                 pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
             }
+            total_written += (size_t)n;
         }
         pthread_mutex_unlock(&(c_ptr->mtx));
     } else if (FZ_TCP_SOCKET & channel->type) {
-        fz_log(FZ_INFO, "Writing to TCP server");
+        // fz_log(FZ_INFO, "Writing to TCP server");
         struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
         pthread_mutex_lock(&(c_ptr->mtx));
         request_d = c_ptr->socket_d;
@@ -403,18 +407,25 @@ extern int fz_channel_read_request(fz_channel_t *channel, char *buffer, size_t d
         struct fz_fifo_channel_s *c_ptr = (struct fz_fifo_channel_s *)channel->channel_desc;
         pthread_mutex_lock(&(c_ptr->mtx));
         request_d = c_ptr->request_d;
-        for (size_t i = 0; i < data_size; i += scratchpad_size){
-            size_t min = scratchpad_size > (data_size - i)? (data_size - i) : scratchpad_size;
-            if (-1 == read(request_d, temp_, min)){
+
+        size_t total_read = 0;
+        while (total_read < data_size) {
+            size_t remaining = data_size - total_read;
+            size_t want = scratchpad_size > remaining ? remaining : scratchpad_size;
+            ssize_t n = read(request_d, temp_, want);
+            if (n < 0) {
                 pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
             }
-            if (NULL == temp_){pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);}
-            memcpy(buffer + i, temp_, min);
-            memset(temp_, 0, scratchpad_size);
+            if (0 == n) {
+                fz_log(FZ_ERROR, "Unexpected EOF on FIFO read, got %zu/%zu bytes", total_read, data_size);
+                pthread_mutex_unlock(&(c_ptr->mtx)); RETURN_DEFER(0);
+            }
+            memcpy(buffer + total_read, temp_, (size_t)n);
+            total_read += (size_t)n;
         }
         pthread_mutex_unlock(&(c_ptr->mtx));
     } else if (FZ_TCP_SOCKET & channel->type) {
-        fz_log(FZ_INFO, "Reading from TCP client");
+        // fz_log(FZ_INFO, "Reading from TCP client");
         struct fz_tcp_channel_s *c_ptr = (struct fz_tcp_channel_s *)channel->channel_desc;
         pthread_mutex_lock(&(c_ptr->mtx));
         request_d = c_ptr->client_d;

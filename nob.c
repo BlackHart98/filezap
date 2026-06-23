@@ -31,7 +31,7 @@ int main(int argc, char *argv[]){
 
     for (int i = 0; i < NOB_ARRAY_LEN(objects); i++){
         nob_cc(&cmd);
-        nob_cc_flags(&cmd);
+        // nob_cc_flags(&cmd);
         nob_cc_add_include(&cmd, "core");
         nob_cc_add_include(&cmd, "externals");
         nob_cmd_append(&cmd, "-c", "-O3");

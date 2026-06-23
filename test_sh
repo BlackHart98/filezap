@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+
+rm examples/dest/*
+./nob && ./build/test_janitor

@@ -320,11 +320,11 @@ slice_t
 string_lib_cstring_in_slice(string_t *str, slice_t *cstring_slice)
 {
     assert((str->len < cstring_slice->len_in_bytes)&&"Slice cannot hold string");
-    memset(cstring_slice->ptr, 0, cstring_slice->len_in_bytes);
     memcpy(cstring_slice->ptr, str->ptr, str->len);
+    memset(cstring_slice->ptr + str->len, 0, cstring_slice->len_in_bytes - str->len);
     return (slice_t){
         .ptr = cstring_slice->ptr,
-        .len_in_bytes = cstring_slice->len_in_bytes,
+        .len_in_bytes = str->len,
     };
 }
 

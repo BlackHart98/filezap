@@ -100,11 +100,13 @@ static inline int fz_chunking_fixed_size(fz_ctx_t *ctx, fz_file_manifest_t *file
     size_t size_read = 0;
     while((size_read = fread(block, 1, ctx->ctx_attrs.in_mem_buffer, input_fd)) > 0){
         for (size_t i = 0; i < size_read; i += chunk_size){
-            size_t min = chunk_size;
+            size_t remaining = size_read - i;
+            size_t min = chunk_size < remaining ? chunk_size : remaining; 
+            
             xxhash_hexdigest(block + i, min, &digest);
             file_mnfst->chunk_seq.chunk_checksum[chunk_seq_len] = digest;
             file_mnfst->chunk_seq.cutpoint[chunk_seq_len] = chunk_size * chunk_seq_len;
-            file_mnfst->chunk_seq.chunk_size[chunk_seq_len] = chunk_size;
+            file_mnfst->chunk_seq.chunk_size[chunk_seq_len] = min;
             chunk_seq_len++;
         }
         memset(block, 0, ctx->ctx_attrs.in_mem_buffer);

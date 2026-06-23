@@ -93,3 +93,6 @@ static int get_filename_v2(arena_allocator_t *allocator, const char *file_path, 
         return result;
 }
 ```
+- There is a newly introduced bug fromread and writeing through both TCP and Pipe channel, I don't even know what to do to mitigate this mess
+- The issue seems to strictly come from the Pipe, but the TCP has a different issue, the issue is the last chunk has extra padding to it
+- The padding was from to manifest population, I have fixed that

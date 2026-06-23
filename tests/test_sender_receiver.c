@@ -28,7 +28,7 @@ int main(int argc, char *argv[]){
         fz_log(FZ_ERROR, "Failed to initialize arena context in %s", __func__);
         RETURN_DEFER(1);
     }
-
+    fz_log(FZ_INFO, "Temp arena allocator: %zu", arena_allocator_total_capacity(&(context.temp_allocator)));
     pid_t child_process = fork(); 
     if (-1 == child_process){
         fz_log(FZ_ERROR, "Failed to create child process");
@@ -67,6 +67,7 @@ int main(int argc, char *argv[]){
         fz_log(FZ_INFO, "File retrieved successfully");
     }
 
+    fz_log(FZ_INFO, "Temp arena allocator: %zu", arena_allocator_total_capacity(&(context.temp_allocator)));
     /* Clean up */
     defer:
         fz_ctx_destroy(&snd_fz); fz_channel_destroy(&snd_channel);

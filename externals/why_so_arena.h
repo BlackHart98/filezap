@@ -165,6 +165,9 @@ arena_allocator_resize_aligned(arena_allocator_t *arena_allocator, slice_t alloc
 ARENA_LOCAL slice_t
 arena_allocator_dup_aligned(arena_allocator_t *arena_allocator, slice_t input_slice, size_t alignment_);
 
+ARENA_LOCAL size_t 
+arena_allocator_total_capacity(arena_allocator_t *arena_allocator);
+
 ARENA_LOCAL context_t 
 context_init(size_t allocator_capacity, size_t temp_allocator_capacity);
 
@@ -377,6 +380,18 @@ arena_allocator_dup_aligned(arena_allocator_t *arena_allocator, slice_t input_sl
     return new_slice;
 }
 
+
+size_t 
+arena_allocator_total_capacity(arena_allocator_t *arena_allocator)
+{
+    size_t total_capacity = 0;
+    arena_linked_node_t *linkedlist = arena_allocator->linkedlist;
+    while (NULL != linkedlist){
+        total_capacity += linkedlist->arena.capacity;
+        linkedlist = linkedlist->next;
+    }
+    return total_capacity;
+}
 
 slice_t
 make_slice(void *object, size_t len_in_bytes)

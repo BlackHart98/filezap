@@ -73,7 +73,7 @@ extern int fz_query_required_chunk_list(context_t *context, fz_ctx_t *ctx, fz_fi
     if (SQLITE_DONE != ret) RETURN_DEFER(0);
     *nchunk = local_nchunk;
     *chunk_buffer = buffer;
-    fz_log(FZ_INFO, "Found chunk size: %lu", local_nchunk);
+    fz_log(FZ_INFO, "Found chunk count: %lu", local_nchunk);
 
     defer:
         if (NULL != insert) sqlite3_finalize(insert);

@@ -358,7 +358,7 @@ extern int xxhash_hexdigest_from_file_prime(fz_hex_digest_t *digest, fz_hex_dige
 
 
 extern int fz_serialize_response(context_t *context, fz_chunk_response_t *response, string_t *json_str);
-extern int fz_deserialize_response(char *json, fz_chunk_response_t *response);
+extern int fz_deserialize_response(arena_allocator_t *allocator, char *json, array_list_t *response_list);
 
 
 extern int fz_channel_init_v2(arena_allocator_t *allocator, fz_channel_t *channel, int channel_desc, int mode, fz_channel_attr_t *channel_attr);
