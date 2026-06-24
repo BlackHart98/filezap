@@ -5,7 +5,7 @@
 #include <string.h>
 #include <limits.h>
 
-#define BITSET_IMPLEMENTATION
+
 #include "why_so_arena.h"
 #include "array_list.h"
 
@@ -61,6 +61,7 @@ bitset_init(arena_allocator_t *allocator, size_t len)
 void
 bitset_add(bitset_t *bitset, size_t item)
 {
+    assert((NULL != bitset)&&"Bitset is NULL");
     size_t index = item / 8;
     size_t sub_str_index = (bitset->len - (index * 8)) - (bitset->len - item);
     bitset->bits[index] |= (unsigned char)(MSB >> sub_str_index);
@@ -70,6 +71,7 @@ bitset_add(bitset_t *bitset, size_t item)
 char
 bitset_test(bitset_t *bitset, size_t item)
 {
+    assert((NULL != bitset)&&"Bitset is NULL");
     assert((bitset->len > item)&&"Query item should be 0 <= item < bitset->len");
     size_t index = item / 8;
     size_t sub_str_index = (bitset->len - (index * 8)) - (bitset->len - item);
@@ -80,6 +82,7 @@ bitset_test(bitset_t *bitset, size_t item)
 void
 bitset_toggle(bitset_t *bitset, size_t item)
 {
+    assert((NULL != bitset)&&"Bitset is NULL");
     size_t index = item / 8;
     size_t sub_str_index = (bitset->len - (index * 8)) - (bitset->len - item);
     bitset->bits[index] &= ~(unsigned char)(MSB >> sub_str_index);
